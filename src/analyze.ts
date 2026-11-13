@@ -138,6 +138,25 @@ export function isTrueConst(expr: Node | undefined): boolean {
   return false;
 }
 
+/**
+ * True when an expression reads user-editable metadata: a string constant or
+ * column name that holds user_metadata or raw_user_meta_data. Any signed-in
+ * user can change their own user_metadata, so a policy must not trust it.
+ * Mirrors splinter 0015 rls_references_user_metadata.
+ */
+export function readsUserMetadata(node: unknown): boolean {
+  if (Array.isArray(node)) return node.some(readsUserMetadata);
+  if (node && typeof node === "object") {
+    for (const [k, v] of Object.entries(node as Node)) {
+      if (k === "sval" && typeof v === "string") {
+        const t = v.toLowerCase();
+        if (t.includes("user_metadata") || t.includes("raw_user_meta_data")) return true;
+      } else if (readsUserMetadata(v)) return true;
+    }
+  }
+  return false;
+}
+
 class Analyzer {
   tables = new Map<string, TableState>();
   policies = new Map<string, PolicyState>();
@@ -512,6 +531,20 @@ class Analyzer {
             : `Enable RLS on ${key} and add policies, or REVOKE ${cmds} ON ${key} FROM ${role}.`,
         });
       }
+    }
+
+    // R8 looks at every policy, restrictive or not, and does not need RLS to be on yet.
+    for (const p of this.policies.values()) {
+      if (!readsUserMetadata(p.qual) && !readsUserMetadata(p.withCheck)) continue;
+      out.push({
+        rule: "R8",
+        severity: "high",
+        object: `${p.table}.${p.name}`,
+        file: p.loc.file,
+        line: p.loc.line,
+        message: `Policy "${p.name}" on ${p.table} reads user_metadata (raw_user_meta_data). Users can edit their own user_metadata, so they can pass this check.`,
+        fix: `Use app_metadata (only the server can change it) or a table you control, for example a roles table.`,
+      });
     }
 
     for (const p of this.policies.values()) {

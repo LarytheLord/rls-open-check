@@ -62,7 +62,7 @@ describe("--format sarif", () => {
     const r = await run(["--format", "sarif", fx("r1-good")]);
     const log = checkSarif(r.stdout);
     expect(log.runs[0].results).toEqual([]);
-    expect(log.runs[0].tool.driver.rules.map((x: any) => x.id)).toEqual(["R1", "R2", "R3", "R4", "R5", "R6", "R7"]);
+    expect(log.runs[0].tool.driver.rules.map((x: any) => x.id)).toEqual(["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8"]);
     expect(r.code).toBe(0);
   });
   it("reports parse warnings as notifications, not results", async () => {

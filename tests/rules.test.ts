@@ -73,6 +73,43 @@ describe("R3 authenticated can change anyone's rows", () => {
   });
 });
 
+describe("R8 policy reads user-editable metadata (splinter 0015)", () => {
+  it("flags user_metadata and raw_user_meta_data in USING and WITH CHECK", async () => {
+    const r = await scan("r8-bad");
+    const f = only(r.findings, "R8");
+    expect(f.map((x) => x.object)).toEqual([
+      "public.reports.jwt arrow",
+      "public.reports.jwt path",
+      "public.reports.users table",
+      "public.reports.check side",
+      "public.reports.narrow",
+    ]);
+    expect(f.every((x) => x.severity === "high")).toBe(true);
+    expect(f[0].fix).toContain("app_metadata");
+    expect(f[0].line).toBe(3);
+  });
+  it("does not flag app_metadata, your own tables or user_metadata outside a policy", async () => {
+    expect((await scan("r8-good")).findings).toEqual([]);
+  });
+  it("a later ALTER POLICY or DROP POLICY removes the finding", async () => {
+    const base =
+      "create table public.t (id int, uid uuid); alter table public.t enable row level security;" +
+      "create policy p on public.t for select to authenticated using (auth.jwt() -> 'user_metadata' ->> 'x' = '1');";
+    const bad = await analyzeSources([{ file: "a.sql", sql: base }]);
+    expect(rules(bad.findings)).toEqual(["R8"]);
+    const fixed = await analyzeSources([
+      { file: "a.sql", sql: base },
+      { file: "b.sql", sql: "alter policy p on public.t using (auth.uid() = uid);" },
+    ]);
+    expect(fixed.findings).toEqual([]);
+    const dropped = await analyzeSources([
+      { file: "a.sql", sql: base },
+      { file: "b.sql", sql: "drop policy p on public.t;" },
+    ]);
+    expect(dropped.findings).toEqual([]);
+  });
+});
+
 describe("R4 grant to anon on a table without RLS", () => {
   it("flags explicit and ALL TABLES grants", async () => {
     const f = only((await scan("r4-bad")).findings, "R4");
