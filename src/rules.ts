@@ -15,4 +15,6 @@ export const RULES: RuleInfo[] = [
   { id: "R5", name: "SecurityDefinerWithoutSearchPath", severity: "medium", description: "SECURITY DEFINER function has no SET search_path." },
   { id: "R6", name: "RlsDisabled", severity: "critical", description: "Row Level Security was disabled on a table in the public schema." },
   { id: "R7", name: "GrantWithoutPolicy", severity: "high", description: "anon or authenticated has SELECT, INSERT, UPDATE or DELETE on a public table, and RLS is off or no policy covers that command." },
+  { id: "R8", name: "PolicyReadsUserMetadata", severity: "high", description: "Policy reads user_metadata or raw_user_meta_data, which users can edit themselves." },
+  { id: "R9", name: "SecurityDefinerExecutableByApiRole", severity: "medium", description: "SECURITY DEFINER function in public can be run by anon or authenticated through the Data API." },
 ];

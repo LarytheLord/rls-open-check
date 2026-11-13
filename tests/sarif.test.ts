@@ -45,13 +45,13 @@ describe("--format sarif", () => {
   it("prints a valid SARIF 2.1.0 log with one result per finding", async () => {
     const r = await run(["--format", "sarif", fx("mixed-app")]);
     const log = checkSarif(r.stdout);
-    expect(log.runs[0].results).toHaveLength(3);
-    expect(log.runs[0].results.map((x: any) => x.ruleId)).toEqual(["R1", "R2", "R5"]);
+    expect(log.runs[0].results).toHaveLength(4);
+    expect(log.runs[0].results.map((x: any) => x.ruleId)).toEqual(["R1", "R2", "R5", "R9"]);
     expect(r.code).toBe(1);
   });
   it("maps severities to SARIF levels", async () => {
     const log = checkSarif((await run(["--format=sarif", fx("mixed-app")])).stdout);
-    expect(log.runs[0].results.map((x: any) => x.level)).toEqual(["error", "error", "warning"]);
+    expect(log.runs[0].results.map((x: any) => x.level)).toEqual(["error", "error", "warning", "warning"]);
   });
   it("uses a repo-relative forward-slash uri and the right line", async () => {
     const log = checkSarif((await run(["--format", "sarif", fx("r2-bad-anon")])).stdout);
@@ -62,7 +62,7 @@ describe("--format sarif", () => {
     const r = await run(["--format", "sarif", fx("r1-good")]);
     const log = checkSarif(r.stdout);
     expect(log.runs[0].results).toEqual([]);
-    expect(log.runs[0].tool.driver.rules.map((x: any) => x.id)).toEqual(["R1", "R2", "R3", "R4", "R5", "R6", "R7"]);
+    expect(log.runs[0].tool.driver.rules.map((x: any) => x.id)).toEqual(["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9"]);
     expect(r.code).toBe(0);
   });
   it("reports parse warnings as notifications, not results", async () => {

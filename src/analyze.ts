@@ -66,7 +66,25 @@ interface FunctionState {
   signature: string;
   securityDefiner: boolean;
   hasSearchPath: boolean;
+  /** RETURNS trigger: the Data API cannot call these. */
+  returnsTrigger: boolean;
+  /** Who holds EXECUTE among PUBLIC, anon and authenticated (for R9). */
+  exec: Set<FnGrantee>;
   loc: Loc;
+}
+
+type FnGrantee = "public" | "anon" | "authenticated";
+const FN_GRANTEES: FnGrantee[] = ["public", "anon", "authenticated"];
+/** Postgres gives EXECUTE on a new function to PUBLIC. */
+const initialExec = (): Set<FnGrantee> => new Set<FnGrantee>(["public"]);
+
+function applyFnPrivs(set: Set<FnGrantee>, isGrant: boolean, grantees: string[], privs: string[]) {
+  if (!privs.includes("execute") && !privs.includes("all")) return;
+  for (const g of FN_GRANTEES) {
+    if (!grantees.includes(g)) continue;
+    if (isGrant) set.add(g);
+    else set.delete(g);
+  }
 }
 
 const tkey = (schema: string, name: string) => `${schema}.${name}`;
@@ -138,6 +156,25 @@ export function isTrueConst(expr: Node | undefined): boolean {
   return false;
 }
 
+/**
+ * True when an expression reads user-editable metadata: a string constant or
+ * column name that holds user_metadata or raw_user_meta_data. Any signed-in
+ * user can change their own user_metadata, so a policy must not trust it.
+ * Mirrors splinter 0015 rls_references_user_metadata.
+ */
+export function readsUserMetadata(node: unknown): boolean {
+  if (Array.isArray(node)) return node.some(readsUserMetadata);
+  if (node && typeof node === "object") {
+    for (const [k, v] of Object.entries(node as Node)) {
+      if (k === "sval" && typeof v === "string") {
+        const t = v.toLowerCase();
+        if (t.includes("user_metadata") || t.includes("raw_user_meta_data")) return true;
+      } else if (readsUserMetadata(v)) return true;
+    }
+  }
+  return false;
+}
+
 class Analyzer {
   tables = new Map<string, TableState>();
   policies = new Map<string, PolicyState>();
@@ -146,6 +183,8 @@ class Analyzer {
   defaultAnon = new Map<string, { loc: Loc; privs: Set<string> }>();
   /** Default DML privileges for anon and authenticated, per schema ("*" = all). */
   defaultDml = new Map<string, Map<ApiRole, DmlGrant>>();
+  /** Default EXECUTE holders for functions created later, per schema ("*" = all). */
+  defaultFnExec = new Map<string, Set<FnGrantee>>();
 
   private table(key: string, schema: string, name: string): TableState {
     let t = this.tables.get(key);
@@ -181,7 +220,28 @@ class Analyzer {
     return privs.map((p) => String(p.AccessPriv?.priv_name ?? "all").toLowerCase());
   }
 
+  private applyFunctionGrant(g: Node) {
+    const grantees = roleNames(g.grantees);
+    const privs = this.privNames(g);
+    const isGrant = g.is_grant === true;
+    if (g.targtype === "ACL_TARGET_OBJECT") {
+      for (const o of g.objects ?? []) {
+        if (!o.ObjectWithArgs) continue;
+        for (const [, f] of this.matchingFunctions(o.ObjectWithArgs)) applyFnPrivs(f.exec, isGrant, grantees, privs);
+      }
+    } else if (g.targtype === "ACL_TARGET_ALL_IN_SCHEMA") {
+      const schemas = strings(g.objects);
+      for (const f of this.functions.values()) {
+        if (schemas.includes(f.schema)) applyFnPrivs(f.exec, isGrant, grantees, privs);
+      }
+    }
+  }
+
   private applyGrant(g: Node, loc: Loc) {
+    if (["OBJECT_FUNCTION", "OBJECT_ROUTINE", "OBJECT_PROCEDURE"].includes(g.objtype)) {
+      this.applyFunctionGrant(g);
+      return;
+    }
     if (g.objtype !== "OBJECT_TABLE") return;
     const grantees = roleNames(g.grantees);
     const apiRoles = apiRolesOf(grantees);
@@ -220,7 +280,20 @@ class Analyzer {
 
   private applyDefaultPrivileges(s: Node, loc: Loc) {
     const action = s.action;
-    if (!action || action.objtype !== "OBJECT_TABLE") return;
+    if (!action) return;
+    if (["OBJECT_FUNCTION", "OBJECT_ROUTINE"].includes(action.objtype)) {
+      let fnSchemas: string[] = ["*"];
+      for (const o of s.options ?? []) {
+        if (o.DefElem?.defname === "schemas") fnSchemas = strings(o.DefElem.arg?.List?.items);
+      }
+      for (const sc of fnSchemas) {
+        const cur = new Set(this.defaultFnExec.get(sc) ?? this.defaultFnExec.get("*") ?? initialExec());
+        applyFnPrivs(cur, action.is_grant === true, roleNames(action.grantees), this.privNames(action));
+        this.defaultFnExec.set(sc, cur);
+      }
+      return;
+    }
+    if (action.objtype !== "OBJECT_TABLE") return;
     const grantees = roleNames(action.grantees);
     const apiRoles = apiRolesOf(grantees);
     if (apiRoles.length === 0) return;
@@ -275,14 +348,11 @@ class Analyzer {
       if (d.defname === "security") securityDefiner = d.arg?.Boolean?.boolval === true;
       if (d.defname === "set" && d.arg?.VariableSetStmt?.name === "search_path") hasSearchPath = true;
     }
-    this.functions.set(`${schema}.${name}(${signature})`, {
-      schema,
-      name,
-      signature,
-      securityDefiner,
-      hasSearchPath,
-      loc,
-    });
+    const key = `${schema}.${name}(${signature})`;
+    // CREATE OR REPLACE keeps the privileges the function already has.
+    const exec = this.functions.get(key)?.exec ?? new Set(this.defaultFnExec.get(schema) ?? this.defaultFnExec.get("*") ?? initialExec());
+    const returnsTrigger = ["trigger", "event_trigger"].includes(typeName(s.returnType));
+    this.functions.set(key, { schema, name, signature, securityDefiner, hasSearchPath, returnsTrigger, exec, loc });
   }
 
   private matchingFunctions(o: Node): [string, FunctionState][] {
@@ -514,6 +584,20 @@ class Analyzer {
       }
     }
 
+    // R8 looks at every policy, restrictive or not, and does not need RLS to be on yet.
+    for (const p of this.policies.values()) {
+      if (!readsUserMetadata(p.qual) && !readsUserMetadata(p.withCheck)) continue;
+      out.push({
+        rule: "R8",
+        severity: "high",
+        object: `${p.table}.${p.name}`,
+        file: p.loc.file,
+        line: p.loc.line,
+        message: `Policy "${p.name}" on ${p.table} reads user_metadata (raw_user_meta_data). Users can edit their own user_metadata, so they can pass this check.`,
+        fix: `Use app_metadata (only the server can change it) or a table you control, for example a roles table.`,
+      });
+    }
+
     for (const p of this.policies.values()) {
       const t = this.tables.get(p.table);
       // A policy on a table whose RLS is off does nothing; R1 or R6 covers it.
@@ -535,20 +619,30 @@ class Analyzer {
           message: `Policy "${p.name}" on ${p.table} allows ${p.cmd.toUpperCase()} for ${who} with a condition that is always true, so anyone with the public API key gets access.`,
           fix: `Replace true with a real check such as auth.uid() = user_id, or change the role to authenticated.`,
         });
-      } else if (
-        p.roles.includes("authenticated") &&
-        ["update", "delete", "all"].includes(p.cmd) &&
-        (readsUsing || writesCheck)
-      ) {
-        out.push({
-          rule: "R3",
-          severity: "high",
-          object: `${p.table}.${p.name}`,
-          file: p.loc.file,
-          line: p.loc.line,
-          message: `Policy "${p.name}" on ${p.table} lets any logged-in user ${p.cmd === "all" ? "change or delete" : p.cmd} any row.`,
-          fix: `Limit the rows to their owner, for example USING (auth.uid() = user_id).`,
-        });
+      } else if (p.roles.includes("authenticated")) {
+        // R3 also covers INSERT: WITH CHECK (true) lets any logged-in user add rows
+        // as anyone (splinter 0024 rls_policy_always_true, authenticated role).
+        if (p.cmd === "insert") {
+          out.push({
+            rule: "R3",
+            severity: "high",
+            object: `${p.table}.${p.name}`,
+            file: p.loc.file,
+            line: p.loc.line,
+            message: `Policy "${p.name}" on ${p.table} lets any logged-in user insert any row, because WITH CHECK is always true.`,
+            fix: `Check the new row, for example WITH CHECK (auth.uid() = user_id).`,
+          });
+        } else if (["update", "delete", "all"].includes(p.cmd)) {
+          out.push({
+            rule: "R3",
+            severity: "high",
+            object: `${p.table}.${p.name}`,
+            file: p.loc.file,
+            line: p.loc.line,
+            message: `Policy "${p.name}" on ${p.table} lets any logged-in user ${p.cmd === "all" ? "change or delete" : p.cmd} any row.`,
+            fix: `Limit the rows to their owner, for example USING (auth.uid() = user_id).`,
+          });
+        }
       }
     }
 
@@ -564,6 +658,24 @@ class Analyzer {
           fix: `Add SET search_path = '' to the function and use fully qualified names inside it.`,
         });
       }
+    }
+
+    // R9: mirrors splinter 0028 anon_security_definer_function_executable and
+    // 0029 authenticated_security_definer_function_executable. PUBLIC counts for both roles.
+    for (const f of this.functions.values()) {
+      if (f.schema !== DEFAULT_SCHEMA || !f.securityDefiner || f.returnsTrigger) continue;
+      const roles = API_ROLES.filter((r) => f.exec.has(r) || f.exec.has("public"));
+      if (roles.length === 0) continue;
+      const sig = `${f.schema}.${f.name}(${f.signature})`;
+      out.push({
+        rule: "R9",
+        severity: "medium",
+        object: sig,
+        file: f.loc.file,
+        line: f.loc.line,
+        message: `SECURITY DEFINER function ${sig} can be run by ${roles.join(" and ")} through the Data API, and it runs with its owner's rights.${f.exec.has("public") ? " PUBLIC still has EXECUTE, which Postgres grants by default." : ""}`,
+        fix: `Run REVOKE EXECUTE ON FUNCTION ${sig} FROM PUBLIC, anon, authenticated and grant it only to roles that need it, or move the function out of public.`,
+      });
     }
 
     return out.sort(

@@ -25,8 +25,8 @@ describe("cli", () => {
   it("prints valid JSON with --json", async () => {
     const r = await run(["--json", fx("mixed-app")]);
     const j = JSON.parse(r.stdout);
-    expect(j.findings).toHaveLength(3);
-    expect(j.summary).toEqual({ low: 0, medium: 1, high: 0, critical: 2 });
+    expect(j.findings).toHaveLength(4);
+    expect(j.summary).toEqual({ low: 0, medium: 2, high: 0, critical: 2 });
     expect(j.findings[0]).toMatchObject({ rule: "R1", severity: "critical" });
     expect(j.findings[0].fix).toBeTruthy();
     expect(r.code).toBe(1);

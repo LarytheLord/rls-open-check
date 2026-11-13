@@ -112,11 +112,13 @@ Each finding has a rule id, a severity and a one-line fix hint.
 |----|----------|---------------|----------|
 | R1 | critical | A table in the `public` schema that never gets `ENABLE ROW LEVEL SECURITY` | Enable RLS and add policies |
 | R2 | critical (INSERT, UPDATE, DELETE, ALL) or high (SELECT) | A policy with `USING (true)` or `WITH CHECK (true)` for `anon` or `public`. A policy with no `TO` clause counts as `public` | Use a real condition such as `auth.uid() = user_id` |
-| R3 | high | A policy for `authenticated` with `USING (true)` on UPDATE, DELETE or ALL: any logged-in user can change anyone's rows | Limit rows to their owner |
+| R3 | high | A policy for `authenticated` with `USING (true)` on UPDATE, DELETE or ALL, or `WITH CHECK (true)` on INSERT, UPDATE or ALL: any logged-in user can change or add anyone's rows | Limit rows to their owner, check the new row with `WITH CHECK (auth.uid() = user_id)` |
 | R4 | high | `GRANT ... TO anon` on a table that has no RLS | Enable RLS or `REVOKE` the grant |
 | R5 | medium | A `SECURITY DEFINER` function in `public` with no `SET search_path` | Add `SET search_path = ''` |
 | R6 | critical | `DISABLE ROW LEVEL SECURITY` on a table and no later `ENABLE` | Enable RLS again |
 | R7 | high (RLS off) or low (RLS on) | A `public` table with `GRANT SELECT`, `INSERT`, `UPDATE` or `DELETE` to `anon` or `authenticated`, where RLS is off or no policy covers that command for that role | Enable RLS and add a policy for the command, or `REVOKE` it |
+| R8 | high | A policy whose `USING` or `WITH CHECK` reads `user_metadata` or `raw_user_meta_data`, for example `auth.jwt() -> 'user_metadata'`. Users can edit their own `user_metadata`, so they can pass the check. Like Supabase splinter lint 0015 | Use `app_metadata` (only the server can change it) or a table you control |
+| R9 | medium | A `SECURITY DEFINER` function in `public` that `anon` or `authenticated` can run: `GRANT EXECUTE` to either role or `PUBLIC`, or no `REVOKE EXECUTE ... FROM PUBLIC` (Postgres grants EXECUTE to `PUBLIC` on new functions). Like splinter lints 0028 and 0029. Separate from R5, so one function can get both | `REVOKE EXECUTE ON FUNCTION ... FROM PUBLIC, anon, authenticated`, then grant only to roles that need it |
 
 Details:
 
@@ -148,6 +150,23 @@ Details:
   usually a missing policy or a leftover grant. R7 can report the same table as
   R1, R4 or R6; they answer different questions. This tool does not read the
   dates or defaults of a Supabase project. It only reads your SQL.
+- **R8 in detail.** Any string or column name that contains `user_metadata` or
+  `raw_user_meta_data` inside a policy counts, in `USING` or `WITH CHECK`, for
+  every policy including restrictive ones. This is a name match: a column of
+  your own that is named `user_metadata` is flagged too, and a policy that reads
+  metadata through a function the tool cannot see into is not. A policy changed
+  later with `ALTER POLICY` or removed with `DROP POLICY` is judged by its last
+  form.
+- **R9 in detail.** The tool starts each function with EXECUTE held by `PUBLIC`,
+  like Postgres. It then reads `GRANT` and `REVOKE` on a function, on
+  `ALL FUNCTIONS IN SCHEMA`, and `ALTER DEFAULT PRIVILEGES ... ON FUNCTIONS`, in
+  file order. `CREATE OR REPLACE` keeps the privileges the function had.
+  Functions that return `trigger` are skipped, because the Data API cannot call
+  them (splinter reports them). Only the `public` schema is checked. Supabase
+  projects may also have default privileges set outside your migrations that
+  give `anon` and `authenticated` EXECUTE on new functions. This tool cannot see
+  those, so a clean R9 result does not rule out a function that is callable
+  through such a default.
 - A statement that does not parse is skipped with a warning. The rest of the
   file is still checked.
 
