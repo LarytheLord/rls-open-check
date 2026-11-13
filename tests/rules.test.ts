@@ -58,6 +58,19 @@ describe("R3 authenticated can change anyone's rows", () => {
   it("does not flag owner checks", async () => {
     expect((await scan("r3-good")).findings).toEqual([]);
   });
+  it("flags WITH CHECK (true) on INSERT and ALL for authenticated", async () => {
+    const f = only((await scan("r3-insert-bad")).findings, "R3");
+    expect(f.map((x) => x.object)).toEqual([
+      "public.comments.any user inserts",
+      "public.comments.any user all",
+    ]);
+    expect(f.every((x) => x.severity === "high")).toBe(true);
+    expect(f[0].message).toContain("insert");
+    expect(f[0].fix).toContain("WITH CHECK");
+  });
+  it("does not flag owner checks on INSERT, restrictive policies or SELECT", async () => {
+    expect((await scan("r3-insert-good")).findings).toEqual([]);
+  });
 });
 
 describe("R4 grant to anon on a table without RLS", () => {

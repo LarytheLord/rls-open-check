@@ -535,20 +535,30 @@ class Analyzer {
           message: `Policy "${p.name}" on ${p.table} allows ${p.cmd.toUpperCase()} for ${who} with a condition that is always true, so anyone with the public API key gets access.`,
           fix: `Replace true with a real check such as auth.uid() = user_id, or change the role to authenticated.`,
         });
-      } else if (
-        p.roles.includes("authenticated") &&
-        ["update", "delete", "all"].includes(p.cmd) &&
-        (readsUsing || writesCheck)
-      ) {
-        out.push({
-          rule: "R3",
-          severity: "high",
-          object: `${p.table}.${p.name}`,
-          file: p.loc.file,
-          line: p.loc.line,
-          message: `Policy "${p.name}" on ${p.table} lets any logged-in user ${p.cmd === "all" ? "change or delete" : p.cmd} any row.`,
-          fix: `Limit the rows to their owner, for example USING (auth.uid() = user_id).`,
-        });
+      } else if (p.roles.includes("authenticated")) {
+        // R3 also covers INSERT: WITH CHECK (true) lets any logged-in user add rows
+        // as anyone (splinter 0024 rls_policy_always_true, authenticated role).
+        if (p.cmd === "insert") {
+          out.push({
+            rule: "R3",
+            severity: "high",
+            object: `${p.table}.${p.name}`,
+            file: p.loc.file,
+            line: p.loc.line,
+            message: `Policy "${p.name}" on ${p.table} lets any logged-in user insert any row, because WITH CHECK is always true.`,
+            fix: `Check the new row, for example WITH CHECK (auth.uid() = user_id).`,
+          });
+        } else if (["update", "delete", "all"].includes(p.cmd)) {
+          out.push({
+            rule: "R3",
+            severity: "high",
+            object: `${p.table}.${p.name}`,
+            file: p.loc.file,
+            line: p.loc.line,
+            message: `Policy "${p.name}" on ${p.table} lets any logged-in user ${p.cmd === "all" ? "change or delete" : p.cmd} any row.`,
+            fix: `Limit the rows to their owner, for example USING (auth.uid() = user_id).`,
+          });
+        }
       }
     }
 
