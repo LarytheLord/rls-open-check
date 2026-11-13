@@ -3,6 +3,29 @@
 All notable changes to rls-open-check are listed here. The format follows
 Keep a Changelog, and the project uses Semantic Versioning.
 
+## [0.2.0] - Unreleased
+
+### Added
+
+- Rule R8: policy whose `USING` or `WITH CHECK` reads `user_metadata` or
+  `raw_user_meta_data`. Users can edit their own `user_metadata`. Follows
+  Supabase splinter lint 0015 (`rls_references_user_metadata`).
+- Rule R9: `SECURITY DEFINER` function in `public` that `anon` or
+  `authenticated` can run, through an explicit `GRANT EXECUTE`, `PUBLIC`, or the
+  Postgres default of EXECUTE for `PUBLIC`. Later `REVOKE`, `GRANT ... ON ALL
+  FUNCTIONS IN SCHEMA` and `ALTER DEFAULT PRIVILEGES ... ON FUNCTIONS` are
+  applied in file order. Follows splinter lints 0028 and 0029. Trigger functions
+  are skipped.
+- R8 and R9 are listed in the SARIF rule metadata.
+
+### Changed
+
+- R3 now also flags `WITH CHECK (true)` on INSERT for `authenticated` (high).
+  Before, an INSERT policy like this was not reported.
+- A `SECURITY DEFINER` function in `public` without a `REVOKE EXECUTE` now
+  reports R9 as well as R5. Projects that scan clean on 0.1.0 can get new
+  findings.
+
 ## [0.1.0] - Unreleased
 
 First public version. Not yet published to npm.

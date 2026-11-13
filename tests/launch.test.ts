@@ -62,6 +62,14 @@ describe("README", () => {
     expect(limits).toContain("EXECUTE");
     expect(limits).toContain("false R1");
   });
+  it("rule table lists every rule and names the splinter lints R8 and R9 follow", () => {
+    const table = readme().split("## What it checks")[1].split("Details:")[0];
+    for (const id of ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9"]) expect(table).toContain(`| ${id} |`);
+    expect(table).toContain("0015");
+    expect(table).toContain("0028");
+    expect(table).toContain("0029");
+    expect(table).toContain("WITH CHECK (auth.uid() = user_id)");
+  });
   it("documents the SARIF path fallback", () => {
     expect(readme()).toMatch(/outside the git root[\s\S]*file:\/\/\//);
   });
