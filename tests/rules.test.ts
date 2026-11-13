@@ -135,6 +135,91 @@ describe("R5 SECURITY DEFINER without search_path", () => {
   });
 });
 
+describe("R9 SECURITY DEFINER function executable by anon or authenticated (splinter 0028, 0029)", () => {
+  it("flags the PUBLIC default, an explicit grant and a revoke that misses PUBLIC", async () => {
+    const f = only((await scan("r9-bad")).findings, "R9");
+    expect(f.map((x) => x.object)).toEqual([
+      "public.open_default()",
+      "public.auth_only(int4)",
+      "public.anon_only()",
+      "public.still_open()",
+    ]);
+    expect(f.every((x) => x.severity === "medium")).toBe(true);
+    expect(f[0].message).toContain("anon and authenticated");
+    expect(f[1].message).toContain("authenticated");
+    expect(f[1].message).not.toContain("anon");
+    expect(f[2].message).toContain("anon");
+    expect(f[2].message).not.toContain("authenticated");
+    expect(f[0].fix).toContain("REVOKE EXECUTE ON FUNCTION public.open_default()");
+    expect(f[0].line).toBe(2);
+  });
+  it("does not flag revoked, service_role only, other schema, invoker or trigger functions", async () => {
+    expect((await scan("r9-good")).findings).toEqual([]);
+  });
+  it("co-occurs with R5 on the same function (different rule ids)", async () => {
+    const r = await analyzeSources([
+      { file: "a.sql", sql: "create function public.f() returns int language sql security definer as $$ select 1 $$;" },
+    ]);
+    expect(rules(r.findings)).toEqual(["R5", "R9"]);
+  });
+  const mk = "create function public.f() returns int language sql security definer set search_path = '' as $$ select 1 $$;";
+  it("a later REVOKE FROM PUBLIC removes the finding, a later GRANT brings it back", async () => {
+    expect(rules((await analyzeSources([{ file: "a.sql", sql: mk }])).findings)).toEqual(["R9"]);
+    const revoked = await analyzeSources([
+      { file: "a.sql", sql: mk },
+      { file: "b.sql", sql: "revoke execute on function public.f() from public;" },
+    ]);
+    expect(revoked.findings).toEqual([]);
+    const regranted = await analyzeSources([
+      { file: "a.sql", sql: mk },
+      { file: "b.sql", sql: "revoke execute on function public.f() from public;" },
+      { file: "c.sql", sql: "grant execute on function public.f() to anon;" },
+    ]);
+    expect(rules(regranted.findings)).toEqual(["R9"]);
+  });
+  it("handles ON ALL FUNCTIONS IN SCHEMA and ALL privileges", async () => {
+    const r = await analyzeSources([
+      { file: "a.sql", sql: mk + "create function public.g() returns int language sql security definer set search_path = '' as $$ select 1 $$;" },
+      { file: "b.sql", sql: "revoke all on all functions in schema public from public;" },
+      { file: "c.sql", sql: "grant all on function public.g() to authenticated;" },
+    ]);
+    expect(only(r.findings, "R9").map((x) => x.object)).toEqual(["public.g()"]);
+  });
+  it("follows ALTER DEFAULT PRIVILEGES for functions created later", async () => {
+    const locked = await analyzeSources([
+      { file: "a.sql", sql: "alter default privileges in schema public revoke execute on functions from public;" },
+      { file: "b.sql", sql: mk },
+    ]);
+    expect(locked.findings).toEqual([]);
+    const granted = await analyzeSources([
+      { file: "a.sql", sql: "alter default privileges in schema public revoke execute on functions from public;" },
+      { file: "b.sql", sql: "alter default privileges in schema public grant execute on functions to anon;" },
+      { file: "c.sql", sql: mk },
+    ]);
+    expect(rules(granted.findings)).toEqual(["R9"]);
+  });
+  it("CREATE OR REPLACE keeps the existing privileges", async () => {
+    const r = await analyzeSources([
+      { file: "a.sql", sql: mk + "revoke execute on function public.f() from public;" },
+      { file: "b.sql", sql: mk.replace("create function", "create or replace function") },
+    ]);
+    expect(r.findings).toEqual([]);
+  });
+  it("ALTER FUNCTION ... SECURITY DEFINER later makes it a finding, DROP FUNCTION clears it", async () => {
+    const inv = "create function public.f() returns int language sql as $$ select 1 $$;";
+    const a = await analyzeSources([
+      { file: "a.sql", sql: inv },
+      { file: "b.sql", sql: "alter function public.f() security definer;" },
+    ]);
+    expect(rules(a.findings)).toEqual(["R5", "R9"]);
+    const d = await analyzeSources([
+      { file: "a.sql", sql: mk },
+      { file: "b.sql", sql: "drop function public.f();" },
+    ]);
+    expect(d.findings).toEqual([]);
+  });
+});
+
 describe("R6 RLS disabled later", () => {
   it("flags DISABLE ROW LEVEL SECURITY in a later migration", async () => {
     const r = await scan("r6-bad");
@@ -234,6 +319,7 @@ describe("mixed app and parse errors", () => {
       "R1:public.profiles",
       "R2:public.orders.orders open",
       "R5:public.admin_sum()",
+      "R9:public.admin_sum()",
     ]);
     expect(r.findings[1].file).toMatch(/20240101000000_init\.sql$/);
     expect(r.findings[1].line).toBe(4);

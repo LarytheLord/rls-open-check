@@ -7,3 +7,4 @@ as $$ select 'x' $$;
 -- invoker functions and other schemas are not flagged
 create function public.plain() returns int language sql as $$ select 1 $$;
 create function private.definer_elsewhere() returns int language sql security definer as $$ select 1 $$;
+revoke all on all functions in schema public from public;
