@@ -1,0 +1,43 @@
+# Copy to .github/workflows/rls-open-check.yml in your project.
+#
+# Runs rls-open-check on pull requests that touch migrations.
+# - Fails the check on any high or critical finding.
+# - Uploads a SARIF file so findings show in the Security tab and as
+#   annotations on the pull request (needs GitHub code scanning: public
+#   repositories, or private ones with GitHub Code Security).
+#
+# The npx line needs the package to be published to npm. Until then, build from
+# a clone instead: git clone, npm ci, npm run build, node dist/bin.js <path>.
+# Pin a version for repeatable builds, for example rls-open-check@0.1.0.
+name: rls-open-check
+on:
+  pull_request:
+    paths:
+      - "supabase/migrations/**"
+
+permissions:
+  contents: read
+
+jobs:
+  rls-open-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # Write the SARIF file first. The exit code still follows --fail-on, so
+      # continue-on-error lets the upload step run.
+      - id: scan
+        run: npx rls-open-check supabase/migrations --format sarif --fail-on high > rls.sarif
+        continue-on-error: true
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: rls.sarif
+      # Fail the job if the scan found high or critical findings.
+      - if: steps.scan.outcome == 'failure'
+        run: exit 1

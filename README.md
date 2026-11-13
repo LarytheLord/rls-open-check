@@ -1,5 +1,7 @@
 # rls-open-check
 
+[![ci](https://github.com/LarytheLord/rls-open-check/actions/workflows/ci.yml/badge.svg)](https://github.com/LarytheLord/rls-open-check/actions/workflows/ci.yml)
+
 A free command line tool that reads your Supabase or Postgres SQL migration
 files and flags Row Level Security (RLS) setups that let the wrong people read
 or write your data.
@@ -10,26 +12,48 @@ with your public API key read or change every row. This tool looks for that and
 a few related mistakes.
 
 Static check only. It runs on your files. It makes no network calls and needs
-no database connection.
+no database connection. It is a linter, not an audit: read [Limits](#limits)
+before you trust a clean result.
 
-## Quick start
+## Why
 
-Needs Node 18 or newer. From the root of a Supabase project:
+Apps made with AI app builders can ship Supabase tables whose Row Level
+Security is switched on but whose policies are always true, for example
+`USING (true)` for `anon`. RLS is on, so the dashboard looks fine, but the
+policy lets anyone with the public API key read or change every row. Supabase
+documents RLS as the access control for tables exposed through its API:
+https://supabase.com/docs/guides/database/postgres/row-level-security
+
+This tool reads your migration files and flags that pattern and a few related
+ones, before they reach production.
+
+## Quick start (30 seconds)
+
+Needs Node 18 or newer. This works today, without npm:
+
+```
+git clone https://github.com/LarytheLord/rls-open-check.git
+cd rls-open-check
+npm ci
+npm run build
+node dist/bin.js path/to/supabase/migrations
+```
+
+It exits 1 if it finds anything high or critical. No config, no database
+connection, no network calls.
+
+`npx rls-open-check` will work once the package is published to npm. It is not
+published yet. After that, from the root of a Supabase project:
 
 ```
 npx rls-open-check
-```
-
-That scans `supabase/migrations` and exits 1 if it finds anything high or
-critical. No install, no config, no database connection, no network calls.
-
-To scan other files or folders:
-
-```
 npx rls-open-check db/schema.sql
 npx rls-open-check supabase/migrations --fail-on medium
 npx rls-open-check --json
 ```
+
+Run it once per project. If you pass folders from two unrelated projects in
+one run, their migrations are merged and treated as one database.
 
 ## Sample output
 
@@ -54,7 +78,10 @@ The sample is checked against the real output by the test suite
 
 ## GitHub Action
 
-Fail a pull request when a migration adds a high or critical finding:
+Fail a pull request when a migration adds a high or critical finding (also in
+[examples/github-action.yml](examples/github-action.yml)). This uses `npx`, so it
+needs the package to be published; until then, build from a clone as in the
+quick start:
 
 ```yaml
 name: rls-check
@@ -218,6 +245,11 @@ npm install --save-dev rls-open-check
 ```
 
 Requires Node 18 or newer.
+
+## Validation
+
+Numbers from running it on public Supabase code are in
+[docs/VALIDATION.md](docs/VALIDATION.md).
 
 ## Changelog
 
