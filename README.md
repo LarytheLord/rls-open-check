@@ -101,7 +101,7 @@ jobs:
       - run: npx rls-open-check supabase/migrations --fail-on high
 ```
 
-Pin a version for repeatable builds, for example `npx rls-open-check@0.1.0`.
+Pin a version for repeatable builds, for example `npx rls-open-check@0.2.0`.
 To see everything but never fail the build, add `|| true` to the command.
 
 ## What it checks

@@ -1,6 +1,6 @@
 {
   "name": "rls-open-check",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Static linter for risky Row Level Security setups in Supabase/Postgres SQL migrations. Text, JSON and SARIF output.",
   "license": "MIT",
   "author": "Guild (guilds.work)",

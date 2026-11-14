@@ -4,7 +4,7 @@ import { formatJson, formatText } from "./report.js";
 import { formatSarif } from "./sarif.js";
 import { SEVERITIES, severityRank, type Severity } from "./types.js";
 
-export const VERSION = "0.1.0";
+export const VERSION = "0.2.0";
 
 const HELP = `rls-open-check - static linter for risky Row Level Security setups
 
