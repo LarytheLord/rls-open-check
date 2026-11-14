@@ -9,12 +9,13 @@ a security problem.
 Useful details: the version or commit, the SQL input that triggers the problem, and
 what you expected to happen.
 
-You can expect a first reply within 7 days. Fixed issues are listed in CHANGELOG.md.
+We aim to reply within 7 days. Fixed issues are listed in CHANGELOG.md.
 
 ## What counts as a security issue here
 
-rls-open-check reads SQL files and prints findings. It makes no network calls and
-never connects to a database. Security issues include:
+rls-open-check reads SQL files and prints findings. The tool's own code makes no
+network calls and never connects to a database. Symlinks are followed, so a link
+inside a scanned directory can lead to files outside it. Security issues include:
 
 - the tool reading or writing files outside the paths you pass to it,
 - the tool executing code from the files it scans,
