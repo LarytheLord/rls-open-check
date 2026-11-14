@@ -3,7 +3,7 @@
 All notable changes to rls-open-check are listed here. The format follows
 Keep a Changelog, and the project uses Semantic Versioning.
 
-## [0.2.0] - Unreleased
+## [0.2.0] - unreleased
 
 ### Added
 
@@ -26,9 +26,10 @@ Keep a Changelog, and the project uses Semantic Versioning.
   reports R9 as well as R5. Projects that scan clean on 0.1.0 can get new
   findings.
 
-## [0.1.0] - Unreleased
+## [0.1.0] - never published
 
-First public version. Not yet published to npm.
+Internal version, never published to npm. Its contents ship in 0.2.0, the first
+public release.
 
 ### Added
 
