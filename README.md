@@ -200,6 +200,29 @@ Read this before you rely on the tool.
 - It does not connect to a database. To check the live state, query
   `pg_policies` and `pg_class.relrowsecurity` on the real project.
 
+## How this compares to Supabase's database linter (splinter)
+
+Supabase's [splinter](https://github.com/supabase/splinter) is the engine behind
+the Security Advisor. It runs SQL views against a live database, sees real
+grants and dashboard edits, and has more lints than this tool (29 files in its
+`lints` directory, many on performance). This tool reads SQL migration files
+before deploy, with no database and no credentials, so it runs on a pull
+request or a fork. Overlap, checked against splinter's lint SQL (commit cd238c8):
+
+| Rule | Splinter lint |
+|------|---------------|
+| R1 | 0013 rls_disabled_in_public, only when anon or authenticated has SELECT |
+| R2 | 0024 rls_policy_always_true, but it skips `USING (true)` on SELECT |
+| R3 | 0024 rls_policy_always_true |
+| R4 | 0013, for SELECT grants only |
+| R5 | 0011 function_search_path_mutable (all functions, not only SECURITY DEFINER) |
+| R6 | no direct match (0013 shows the result, not the statement) |
+| R7 | no direct match (0008 flags RLS on with no policy at all) |
+| R8 | 0015 rls_references_user_metadata |
+| R9 | 0028 (anon) and 0029 (authenticated) |
+
+Use both: splinter on the live project, this in pull requests.
+
 ## Options
 
 ```
