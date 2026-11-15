@@ -70,6 +70,17 @@ describe("README", () => {
     expect(table).toContain("0029");
     expect(table).toContain("WITH CHECK (auth.uid() = user_id)");
   });
+  it("has an honest splinter comparison with a row per rule", () => {
+    const h = "## How this compares to Supabase's database linter (splinter)";
+    expect(readme()).toContain(h);
+    const sec = readme().split(h)[1].split("\n## ")[0];
+    for (const id of ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9"]) expect(sec).toContain(`| ${id} |`);
+    for (const lint of ["0013", "0024", "0011", "0015", "0028", "0029"]) expect(sec).toContain(lint);
+    expect(sec).toMatch(/live database/);
+    expect(sec).toMatch(/no database and no credentials/);
+    expect(sec.trimEnd().endsWith("Use both: splinter on the live project, this in pull requests.")).toBe(true);
+    expect(sec.split("\n").length).toBeLessThanOrEqual(34);
+  });
   it("documents the SARIF path fallback", () => {
     expect(readme()).toMatch(/outside the git root[\s\S]*file:\/\/\//);
   });
