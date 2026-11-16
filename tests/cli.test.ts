@@ -37,6 +37,25 @@ describe("cli", () => {
     expect(r.stdout).toContain("0 finding(s)");
     expect(r.stdout).toContain("0 statement(s) skipped.");
   });
+  it("still exits 1 on findings with --strict", async () => {
+    const r = await run(["--strict", fx("r1-bad")]);
+    expect(r.code).toBe(1);
+  });
+  it("reports skipped statements in JSON with --strict", async () => {
+    const r = await run(["--strict", "--json", fx("strict-parse-error")]);
+    const j = JSON.parse(r.stdout);
+    expect(r.code).toBe(1);
+    expect(j.skipped).toBe(2);
+    expect(j.strict).toBe(true);
+    expect(j.findings).toEqual([]);
+  });
+  it("reports skipped statements in JSON without --strict and exits 0", async () => {
+    const r = await run(["--json", fx("strict-parse-error")]);
+    const j = JSON.parse(r.stdout);
+    expect(r.code).toBe(0);
+    expect(j.skipped).toBe(2);
+    expect(j.strict).toBe(false);
+  });
   it("respects --fail-on: a medium finding passes at high and fails at medium", async () => {
     expect((await run([fx("r5-bad")])).code).toBe(0);
     expect((await run(["--fail-on", "medium", fx("r5-bad")])).code).toBe(1);

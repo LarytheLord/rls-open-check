@@ -33,7 +33,12 @@ export function toUri(file: string, root: string): string {
   return rel.split(sep).map(encodeURIComponent).join("/");
 }
 
-export function formatSarif(r: AnalysisResult, version: string, cwd: string = process.cwd()): string {
+export function formatSarif(
+  r: AnalysisResult,
+  version: string,
+  cwd: string = process.cwd(),
+  strict = false
+): string {
   const root = repoRoot(cwd);
   const ruleIndex = new Map(RULES.map((x, i) => [x.id, i]));
   const log = {
@@ -71,7 +76,7 @@ export function formatSarif(r: AnalysisResult, version: string, cwd: string = pr
         })),
         invocations: [
           {
-            executionSuccessful: true,
+            executionSuccessful: !(strict && r.warnings.length > 0),
             toolExecutionNotifications: r.warnings.map((w) => ({
               level: "warning",
               message: { text: w.message },

@@ -35,12 +35,14 @@ export function summarize(findings: Finding[]): Record<Severity, number> {
   return c;
 }
 
-export function formatJson(r: AnalysisResult, failOn: Severity): string {
+export function formatJson(r: AnalysisResult, failOn: Severity, strict = false): string {
   return (
     JSON.stringify(
       {
         tool: "rls-open-check",
         failOn,
+        strict,
+        skipped: r.warnings.length,
         filesScanned: r.filesScanned,
         summary: summarize(r.findings),
         findings: r.findings,

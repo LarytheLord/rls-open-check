@@ -70,6 +70,21 @@ describe("--format sarif", () => {
     const n = log.runs[0].invocations[0].toolExecutionNotifications;
     expect(n).toHaveLength(1);
     expect(n[0].level).toBe("warning");
+    expect(log.runs[0].invocations[0].executionSuccessful).toBe(true);
+  });
+  it("marks execution unsuccessful on parse warnings with --strict", async () => {
+    const r = await run(["--strict", "--format", "sarif", fx("strict-parse-error")]);
+    const log = checkSarif(r.stdout);
+    expect(r.code).toBe(1);
+    expect(log.runs[0].results).toEqual([]);
+    expect(log.runs[0].invocations[0].executionSuccessful).toBe(false);
+    expect(log.runs[0].invocations[0].toolExecutionNotifications).toHaveLength(2);
+  });
+  it("keeps execution successful without parse warnings with --strict", async () => {
+    const r = await run(["--strict", "--format", "sarif", fx("r1-bad")]);
+    const log = checkSarif(r.stdout);
+    expect(r.code).toBe(1);
+    expect(log.runs[0].invocations[0].executionSuccessful).toBe(true);
   });
   it("output is plain ASCII and --fail-on still sets the exit code", async () => {
     const r = await run(["--format", "sarif", "--fail-on", "critical", fx("r5-bad")]);

@@ -73,9 +73,9 @@ export async function run(argv: string[]): Promise<CliResult> {
     code: failing || (strict && result.warnings.length > 0) ? 1 : 0,
     stdout:
       format === "sarif"
-        ? formatSarif(result, VERSION)
+        ? formatSarif(result, VERSION, undefined, strict)
         : format === "json"
-          ? formatJson(result, failOn)
+          ? formatJson(result, failOn, strict)
           : formatText(result, failOn, strict),
     stderr: "",
   };
