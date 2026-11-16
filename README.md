@@ -17,7 +17,7 @@ before you trust a clean result.
 
 ## What it looks like
 
-![rls-open-check flags an open read policy and a table without RLS, then exits 1](docs/demo.gif)
+![rls-open-check flags an open read policy and a table without RLS, then exits 1](https://raw.githubusercontent.com/LarytheLord/rls-open-check/main/docs/demo.gif)
 
 This migration has two common mistakes:
 
@@ -57,7 +57,7 @@ https://supabase.com/docs/guides/database/postgres/row-level-security
 This tool reads your migration files and flags that pattern and a few related
 ones, before they reach production.
 
-## Quick start (30 seconds)
+## Quick start
 
 Needs Node 18 or newer. This works today, without npm:
 
@@ -310,7 +310,9 @@ SARIF levels: critical and high are `error`, medium is `warning`, low is
 
 ## Install
 
-No install is needed with `npx`. To add it to a project:
+The package is not on npm yet. Until it is, build from source as shown in
+[Quick start](#quick-start). After the first npm release, `npx rls-open-check`
+needs no install, or add it to a project:
 
 ```
 npm install --save-dev rls-open-check
@@ -340,4 +342,6 @@ and there are cases for migration order.
 
 ## License
 
-MIT. Author: Guild (guilds.work).
+MIT. Author: Guild (guilds.work). The tool is free and stays MIT. Guild also
+sells paid launch checks and fixes; that work is separate, and the tool makes
+no network calls and collects nothing.
