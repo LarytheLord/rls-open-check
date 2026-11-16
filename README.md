@@ -20,9 +20,9 @@ before you trust a clean result.
 This migration has two common mistakes:
 
 ```sql
-create table public.profiles (id uuid primary key, email text, plan text);
-alter table public.profiles enable row level security;
-create policy "read profiles" on public.profiles for select to anon using (true);
+create table public.notes (id uuid primary key, user_id uuid, body text);
+alter table public.notes enable row level security;
+create policy "read notes" on public.notes for select to anon using (true);
 
 create table public.payments (id uuid primary key, user_id uuid, amount int);
 ```
@@ -30,8 +30,8 @@ create table public.payments (id uuid primary key, user_id uuid, amount int);
 Output (exit code 1, so a CI step fails):
 
 ```
-supabase/migrations/20261116_init.sql:3  [high] R2  public.profiles.read profiles
-    Policy "read profiles" on public.profiles allows SELECT for anon with a condition that is always true, so anyone with the public API key gets access.
+supabase/migrations/20261116_init.sql:3  [high] R2  public.notes.read notes
+    Policy "read notes" on public.notes allows SELECT for anon with a condition that is always true, so anyone with the public API key gets access.
     Fix: Replace true with a real check such as auth.uid() = user_id, or change the role to authenticated.
 
 supabase/migrations/20261116_init.sql:5  [critical] R1  public.payments
@@ -40,6 +40,7 @@ supabase/migrations/20261116_init.sql:5  [critical] R1  public.payments
 
 Scanned 1 file(s). 2 finding(s): 1 critical, 1 high, 0 medium, 0 low.
 2 finding(s) at or above "high": failing.
+Static check of migration files only. A clean result is not proof of safety.
 ```
 
 ## Why
