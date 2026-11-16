@@ -262,16 +262,23 @@ rls-open-check [options] [paths...]
                      low, medium, high, critical (default: high)
   --format <name>    Output format: text (default), json or sarif
   --json             Same as --format json
+  --strict           Exit 1 on parse warnings; report skipped statements
   -h, --help
   -v, --version
 ```
 
-Exit codes: `0` no finding at or above `--fail-on`, `1` at least one, `2` usage
-error or no files found. Parse warnings do not change the exit code.
+Exit codes: `0` no finding at or above `--fail-on` and no parse warnings with
+`--strict`, `1` at least one such finding or a parse warning with `--strict`,
+`2` usage or file error (including no files found). Without `--strict`, parse
+warnings do not change the exit code. The `--strict` exit code rule applies to
+all output formats. With `--strict`, text shows the skipped statement count,
+JSON includes `strict` and `skipped`, and SARIF marks
+`invocations[0].executionSuccessful` as `false` when parse warnings exist.
 
 JSON output has `findings` (each with `rule`, `severity`, `object`, `file`,
 `line`, `message`, `fix`), `summary` (counts by severity), `warnings` and
-`filesScanned`.
+`filesScanned`, plus `strict` (boolean) and `skipped` (the number of parse
+warnings, whether or not `--strict` is set).
 
 ## SARIF and GitHub code scanning
 

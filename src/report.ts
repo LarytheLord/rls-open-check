@@ -1,7 +1,7 @@
 import type { AnalysisResult, Finding } from "./types.js";
 import { severityRank, type Severity } from "./types.js";
 
-export function formatText(r: AnalysisResult, failOn: Severity): string {
+export function formatText(r: AnalysisResult, failOn: Severity, strict = false): string {
   const lines: string[] = [];
   for (const f of r.findings) {
     lines.push(`${f.file}:${f.line}  [${f.severity}] ${f.rule}  ${f.object}`);
@@ -14,7 +14,8 @@ export function formatText(r: AnalysisResult, failOn: Severity): string {
   const counts = summarize(r.findings);
   lines.push(
     `Scanned ${r.filesScanned.length} file(s). ${r.findings.length} finding(s): ` +
-      `${counts.critical} critical, ${counts.high} high, ${counts.medium} medium, ${counts.low} low.`
+      `${counts.critical} critical, ${counts.high} high, ${counts.medium} medium, ${counts.low} low.` +
+      (strict ? ` ${r.warnings.length} statement(s) skipped.` : "")
   );
   const failing = r.findings.filter((f) => severityRank(f.severity) >= severityRank(failOn)).length;
   lines.push(
@@ -22,6 +23,8 @@ export function formatText(r: AnalysisResult, failOn: Severity): string {
       ? `${failing} finding(s) at or above "${failOn}": failing.`
       : `No findings at or above "${failOn}".`
   );
+  if (strict && r.warnings.length > 0)
+    lines.push(`${r.warnings.length} statement(s) could not be parsed and --strict is set: failing.`);
   lines.push("Static check of migration files only. A clean result is not proof of safety.");
   return lines.join("\n") + "\n";
 }
@@ -32,12 +35,14 @@ export function summarize(findings: Finding[]): Record<Severity, number> {
   return c;
 }
 
-export function formatJson(r: AnalysisResult, failOn: Severity): string {
+export function formatJson(r: AnalysisResult, failOn: Severity, strict = false): string {
   return (
     JSON.stringify(
       {
         tool: "rls-open-check",
         failOn,
+        strict,
+        skipped: r.warnings.length,
         filesScanned: r.filesScanned,
         summary: summarize(r.findings),
         findings: r.findings,
