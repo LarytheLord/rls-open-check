@@ -59,7 +59,7 @@ ones, before they reach production.
 
 ## Quick start
 
-Needs Node 18 or newer. This works today, without npm:
+Needs Node 18 or newer. Run it today by building from source:
 
 ```
 git clone https://github.com/LarytheLord/rls-open-check.git
@@ -284,7 +284,8 @@ changed line, so run the tool from inside the repository. Code scanning must be 
 for the repository (public repositories, or private ones with GitHub Code
 Security). The exit code still
 follows `--fail-on`, so write the file first and upload it even when the check
-fails:
+fails. Like the Action above, this uses `npx`, so it needs the npm release;
+until then, build from a clone as in Quick start:
 
 ```yaml
 jobs:
@@ -311,8 +312,8 @@ SARIF levels: critical and high are `error`, medium is `warning`, low is
 ## Install
 
 The package is not on npm yet. Until it is, build from source as shown in
-[Quick start](#quick-start). After the first npm release, `npx rls-open-check`
-needs no install, or add it to a project:
+[Quick start](#quick-start). After the first npm release, run it with
+`npx rls-open-check`, or add it to a project:
 
 ```
 npm install --save-dev rls-open-check
@@ -342,6 +343,5 @@ and there are cases for migration order.
 
 ## License
 
-MIT. Author: Guild (guilds.work). The tool is free and stays MIT. Guild also
-sells paid launch checks and fixes; that work is separate, and the tool makes
-no network calls and collects nothing.
+MIT, see [LICENSE](LICENSE). Author: Guild (guilds.work). Guild also sells paid
+launch checks and fixes; that work is separate. The tool makes no network calls.
