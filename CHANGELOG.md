@@ -7,6 +7,8 @@ Keep a Changelog, and the project uses Semantic Versioning.
 
 ### Added
 
+- `--strict` exits 1 on any parse warning and includes the number of skipped
+  statements in the text summary. Without the flag, behavior is unchanged.
 - Rule R8: policy whose `USING` or `WITH CHECK` reads `user_metadata` or
   `raw_user_meta_data`. Users can edit their own `user_metadata`. Follows
   Supabase splinter lint 0015 (`rls_references_user_metadata`).

@@ -18,10 +18,11 @@ Options:
                      low, medium, high, critical (default: high)
   --format <name>    Output format: text (default), json or sarif
   --json             Same as --format json
+  --strict           Exit 1 on parse warnings; report skipped statements
   -h, --help         Show this help
   -v, --version      Show the version
 
-Exit codes: 0 ok, 1 findings at or above --fail-on, 2 usage or file error.
+Exit codes: 0 ok, 1 findings at or above --fail-on or parse warnings with --strict, 2 usage or file error.
 `;
 
 export interface CliResult {
@@ -33,12 +34,14 @@ export interface CliResult {
 export async function run(argv: string[]): Promise<CliResult> {
   let failOn: Severity = "high";
   let format = "text";
+  let strict = false;
   const paths: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "-h" || a === "--help") return { code: 0, stdout: HELP, stderr: "" };
     if (a === "-v" || a === "--version") return { code: 0, stdout: VERSION + "\n", stderr: "" };
-    if (a === "--json") format = "json";
+    if (a === "--strict") strict = true;
+    else if (a === "--json") format = "json";
     else if (a === "--format" || a.startsWith("--format=")) {
       const v = a.includes("=") ? a.split("=")[1] : argv[++i];
       if (!["text", "json", "sarif"].includes(v))
@@ -67,13 +70,13 @@ export async function run(argv: string[]): Promise<CliResult> {
   const result = await analyzeFiles(files);
   const failing = result.findings.some((f) => severityRank(f.severity) >= severityRank(failOn));
   return {
-    code: failing ? 1 : 0,
+    code: failing || (strict && result.warnings.length > 0) ? 1 : 0,
     stdout:
       format === "sarif"
         ? formatSarif(result, VERSION)
         : format === "json"
           ? formatJson(result, failOn)
-          : formatText(result, failOn),
+          : formatText(result, failOn, strict),
     stderr: "",
   };
 }
