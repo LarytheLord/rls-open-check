@@ -17,6 +17,8 @@ before you trust a clean result.
 
 ## What it looks like
 
+![rls-open-check flags an open read policy and a table without RLS, then exits 1](docs/demo.gif)
+
 This migration has two common mistakes:
 
 ```sql
