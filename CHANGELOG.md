@@ -3,6 +3,16 @@
 All notable changes to rls-open-check are listed here. The format follows
 Keep a Changelog, and the project uses Semantic Versioning.
 
+## Unreleased
+
+### Added
+
+- `-- rls-open-check-ignore R2` on the line directly above a statement ignores
+  the listed rule ids (comma separated) for that statement. Ignored findings do
+  not affect the exit code. Text output shows "N finding(s) ignored by comment",
+  JSON has an `ignored` array, and SARIF marks them with `suppressions` of kind
+  `inSource`.
+
 ## [0.2.0] - unreleased
 
 ### Added

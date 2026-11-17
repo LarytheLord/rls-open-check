@@ -275,8 +275,26 @@ all output formats. With `--strict`, text shows the skipped statement count,
 JSON includes `strict` and `skipped`, and SARIF marks
 `invocations[0].executionSuccessful` as `false` when parse warnings exist.
 
+### Ignoring a finding
+
+Put a SQL comment on the line directly above the statement that gets flagged:
+
+```sql
+-- rls-open-check-ignore R2
+create policy "anyone writes" on public.posts for insert to anon with check (true);
+```
+
+Use one or more comma separated rule ids, for example
+`-- rls-open-check-ignore R1, R7`. Only the listed rules are ignored, and only
+for the statement on the next line (a blank line in between breaks the match).
+Ignored findings do not count for the exit code. Text output adds
+"N finding(s) ignored by comment" to the summary, JSON has an `ignored` array
+with the same fields as `findings`, and SARIF keeps them as results with
+`suppressions` of kind `inSource`, so code scanning shows them as suppressed.
+
 JSON output has `findings` (each with `rule`, `severity`, `object`, `file`,
-`line`, `message`, `fix`), `summary` (counts by severity), `warnings` and
+`line`, `message`, `fix`), `ignored` (findings suppressed by comment), `summary`
+(counts by severity, ignored findings excluded), `warnings` and
 `filesScanned`, plus `strict` (boolean) and `skipped` (the number of parse
 warnings, whether or not `--strict` is set).
 

@@ -60,11 +60,12 @@ export function formatSarif(
             })),
           },
         },
-        results: r.findings.map((f) => ({
+        results: [...r.findings.map((f) => [f, false] as const), ...r.ignored.map((f) => [f, true] as const)].map(([f, ign]) => ({
           ruleId: f.rule,
           ruleIndex: ruleIndex.get(f.rule),
           level: LEVEL[f.severity],
           message: { text: `${f.message} Fix: ${f.fix}` },
+          ...(ign ? { suppressions: [{ kind: "inSource", justification: "rls-open-check-ignore comment" }] } : {}),
           locations: [
             {
               physicalLocation: {

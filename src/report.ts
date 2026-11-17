@@ -18,6 +18,7 @@ export function formatText(r: AnalysisResult, failOn: Severity, strict = false):
       (strict ? ` ${r.warnings.length} statement(s) skipped.` : "")
   );
   const failing = r.findings.filter((f) => severityRank(f.severity) >= severityRank(failOn)).length;
+  if (r.ignored.length > 0) lines.push(`${r.ignored.length} finding(s) ignored by comment.`);
   lines.push(
     failing > 0
       ? `${failing} finding(s) at or above "${failOn}": failing.`
@@ -46,6 +47,7 @@ export function formatJson(r: AnalysisResult, failOn: Severity, strict = false):
         filesScanned: r.filesScanned,
         summary: summarize(r.findings),
         findings: r.findings,
+        ignored: r.ignored,
         warnings: r.warnings,
       },
       null,
