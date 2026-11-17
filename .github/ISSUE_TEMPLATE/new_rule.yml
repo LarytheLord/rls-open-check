@@ -1,0 +1,31 @@
+name: New rule
+description: Propose a rule for a SQL pattern that leaves data open.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What does the SQL do wrong?
+      description: Explain why the pattern leaves data open.
+    validations:
+      required: true
+  - type: textarea
+    id: failing
+    attributes:
+      label: Failing example
+      description: SQL that the rule should flag.
+      render: sql
+    validations:
+      required: true
+  - type: textarea
+    id: passing
+    attributes:
+      label: Passing example
+      description: SQL that the rule should not flag.
+      render: sql
+    validations:
+      required: true
+  - type: input
+    id: splinter
+    attributes:
+      label: Related splinter lint
+      description: Give the lint ID or link, if applicable.
