@@ -275,8 +275,50 @@ all output formats. With `--strict`, text shows the skipped statement count,
 JSON includes `strict` and `skipped`, and SARIF marks
 `invocations[0].executionSuccessful` as `false` when parse warnings exist.
 
+### Ignoring a finding
+
+Put a SQL comment on the line directly above the statement where the finding is
+reported:
+
+```sql
+-- rls-open-check-ignore R2 -- public docs table
+create policy "anyone writes" on public.posts for insert to anon with check (true);
+```
+
+Form: `-- rls-open-check-ignore` then one or more rule ids separated by commas,
+for example `R1, R7`, then optionally ` -- reason`. Rules:
+
+- Rule ids are case-insensitive, and spaces around the commas are fine.
+- It must be a `--` comment alone on its line. A `/* */` comment, a comment
+  after code on the same line, or a blank line between the comment and the
+  statement does not work.
+- Nothing else may follow the ids except a ` -- reason`. `R2 R3` (space
+  separated) and `R2 because x` do not match, and the finding stays reported.
+- Only the listed rules are ignored, only for that one statement.
+
+A finding is reported at one statement, so the comment goes above that one:
+
+| Rule | Reported at |
+| --- | --- |
+| R1 | `CREATE TABLE` |
+| R2, R3, R8 | the last `CREATE POLICY` or `ALTER POLICY` of that policy |
+| R4, R7 | the `GRANT` (or `ALTER DEFAULT PRIVILEGES`) that gave the privilege |
+| R5, R9 | `CREATE FUNCTION` |
+| R6 | the `ALTER TABLE ... DISABLE ROW LEVEL SECURITY` |
+
+So a comment above `CREATE TABLE` does not silence R7, and a comment above
+`CREATE POLICY` stops working if a later `ALTER POLICY` changes that policy,
+because the finding moves to the `ALTER POLICY` line.
+
+Ignored findings do not count for the exit code, and `--strict` parse warnings
+still do. Text output adds "N finding(s) ignored by comment" to the summary,
+JSON has an `ignored` array with the same fields as `findings`, and SARIF keeps
+them as results with `suppressions` of kind `inSource`, so code scanning shows
+them as suppressed.
+
 JSON output has `findings` (each with `rule`, `severity`, `object`, `file`,
-`line`, `message`, `fix`), `summary` (counts by severity), `warnings` and
+`line`, `message`, `fix`), `ignored` (findings suppressed by comment), `summary`
+(counts by severity, ignored findings excluded), `warnings` and
 `filesScanned`, plus `strict` (boolean) and `skipped` (the number of parse
 warnings, whether or not `--strict` is set).
 

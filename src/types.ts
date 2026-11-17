@@ -28,6 +28,8 @@ export interface Warning {
 export interface AnalysisResult {
   filesScanned: string[];
   findings: Finding[];
+  /** Findings suppressed by a rls-open-check-ignore comment. */
+  ignored: Finding[];
   warnings: Warning[];
 }
 

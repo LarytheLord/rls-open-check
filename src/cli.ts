@@ -22,6 +22,9 @@ Options:
   -h, --help         Show this help
   -v, --version      Show the version
 
+Ignore a finding: put "-- rls-open-check-ignore R2" on the line above the
+statement the finding is reported at. See "Ignoring a finding" in the README.
+
 Exit codes: 0 ok, 1 findings at or above --fail-on or parse warnings with --strict, 2 usage or file error.
 `;
 

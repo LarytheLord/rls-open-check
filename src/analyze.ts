@@ -700,7 +700,25 @@ export async function analyzeSources(
     }
     for (const st of parsed.statements) a.apply(st.node, src.file, st.line);
   }
-  return { filesScanned: sources.map((s) => s.file), findings: a.findings(), warnings };
+  const findings: Finding[] = [];
+  const ignored: Finding[] = [];
+  const directives = new Map(sources.map((s) => [s.file, s.sql.split(/\r?\n/)]));
+  for (const f of a.findings()) {
+    (isIgnored(f, directives.get(f.file)) ? ignored : findings).push(f);
+  }
+  return { filesScanned: sources.map((s) => s.file), findings, ignored, warnings };
+}
+
+/** Form: -- rls-open-check-ignore R2[, R7] [-- reason]. A -- comment alone on its line. */
+const IGNORE_RE = /^\s*--\s*rls-open-check-ignore\s+(R\d+(?:\s*,\s*R\d+)*)(?:\s+--.*)?\s*$/i;
+
+/** True when the line directly above the finding is an ignore comment naming its rule. */
+function isIgnored(f: Finding, lines: string[] | undefined): boolean {
+  const above = lines?.[f.line - 2];
+  if (above === undefined) return false;
+  const m = IGNORE_RE.exec(above);
+  if (!m) return false;
+  return m[1].split(",").some((id) => id.trim().toUpperCase() === f.rule);
 }
 
 /** Analyze files in the order given. Callers sort by migration name first. */

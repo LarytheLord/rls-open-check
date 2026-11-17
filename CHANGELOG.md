@@ -7,6 +7,11 @@ Keep a Changelog, and the project uses Semantic Versioning.
 
 ### Added
 
+- `-- rls-open-check-ignore R2` on the line directly above a statement ignores
+  the listed rule ids (comma separated) for that statement. Ignored findings do
+  not affect the exit code. Text output shows "N finding(s) ignored by comment",
+  JSON has an `ignored` array, and SARIF marks them with `suppressions` of kind
+  `inSource`. A trailing `-- reason` after the ids is allowed.
 - `--strict` exits 1 on any parse warning and includes the number of skipped
   statements in the text summary. Without the flag, behavior is unchanged.
 - Rule R8: policy whose `USING` or `WITH CHECK` reads `user_metadata` or
