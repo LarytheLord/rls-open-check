@@ -15,7 +15,8 @@ npm run build
 
 The package scripts run `tsc --noEmit`, `vitest run`, and
 `tsc -p tsconfig.build.json`, respectively. The pack-install workflow also
-builds and tests the packed package on Node 18, 20, and 22.
+builds, packs, installs and smoke-runs the package on Node 18, 20 and 22, on
+Linux, macOS and Windows.
 
 ## Add a rule
 
@@ -28,8 +29,8 @@ builds and tests the packed package on Node 18, 20, and 22.
    like `r8-bad/001.sql` and `r8-good/001.sql`. In `tests/rules.test.ts`, use
    `scan` to assert that the bad example reports the rule and the good example
    does not. Add tests for migration ordering where relevant.
-4. Update the rule table in `README.md` and the unreleased section of
-   `CHANGELOG.md`.
+4. Update the rule table in `README.md` and the top (unreleased) version
+   section of `CHANGELOG.md`.
 5. Run the CI commands above.
 
 Write commit messages in plain English, with no trailers.
