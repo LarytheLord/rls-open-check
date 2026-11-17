@@ -18,3 +18,10 @@ export const RULES: RuleInfo[] = [
   { id: "R8", name: "PolicyReadsUserMetadata", severity: "high", description: "Policy reads user_metadata or raw_user_meta_data, which users can edit themselves." },
   { id: "R9", name: "SecurityDefinerExecutableByApiRole", severity: "medium", description: "SECURITY DEFINER function in public can be run by anon or authenticated through the Data API." },
 ];
+
+const DOCS_BASE = "https://github.com/LarytheLord/rls-open-check#";
+
+/** README anchor for a rule: the "### R1" heading slugs to "r1". */
+export function ruleDocsUrl(id: RuleId): string {
+  return DOCS_BASE + id.toLowerCase();
+}

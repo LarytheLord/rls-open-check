@@ -1,4 +1,5 @@
 import type { AnalysisResult, Finding } from "./types.js";
+import { ruleDocsUrl } from "./rules.js";
 import { severityRank, type Severity } from "./types.js";
 
 export function formatText(r: AnalysisResult, failOn: Severity, strict = false): string {
@@ -26,6 +27,8 @@ export function formatText(r: AnalysisResult, failOn: Severity, strict = false):
   );
   if (strict && r.warnings.length > 0)
     lines.push(`${r.warnings.length} statement(s) could not be parsed and --strict is set: failing.`);
+  const fired = [...new Set(r.findings.map((f) => f.rule))].sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
+  for (const id of fired) lines.push(`Docs: ${ruleDocsUrl(id)}`);
   lines.push("Static check of migration files only. A clean result is not proof of safety.");
   return lines.join("\n") + "\n";
 }
