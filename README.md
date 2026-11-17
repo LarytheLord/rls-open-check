@@ -154,9 +154,7 @@ Each finding has a rule id, a severity and a one-line fix hint.
 | R8 | high | A policy whose `USING` or `WITH CHECK` reads `user_metadata` or `raw_user_meta_data`, for example `auth.jwt() -> 'user_metadata'`. Users can edit their own `user_metadata`, so they can pass the check. Like Supabase splinter lint 0015 | Use `app_metadata` (only the server can change it) or a table you control |
 | R9 | medium | A `SECURITY DEFINER` function in `public` that `anon` or `authenticated` can run: `GRANT EXECUTE` to either role or `PUBLIC`, or no `REVOKE EXECUTE ... FROM PUBLIC` (Postgres grants EXECUTE to `PUBLIC` on new functions). Like splinter lints 0028 and 0029. Separate from R5, so one function can get both | `REVOKE EXECUTE ON FUNCTION ... FROM PUBLIC, anon, authenticated`, then grant only to roles that need it |
 
-### Rule reference
-
-Each rule has its own heading, so `https://github.com/LarytheLord/rls-open-check#r1`
+**Rule reference.** Each rule has its own heading, so `https://github.com/LarytheLord/rls-open-check#r1`
 (and `#r2` and so on) links straight to it. SARIF `helpUri` and the "Docs:"
 lines in text output point here.
 
@@ -410,7 +408,7 @@ If you run rls-open-check in CI, you can add a badge to your README. It is a
 static badge: it says you run the check, not that the last run passed.
 
 ```markdown
-[![RLS checked | rls-open-check](https://img.shields.io/badge/RLS%20checked-rls--open--check-3ECF8E)](https://github.com/LarytheLord/rls-open-check)
+[![RLS checked: rls-open-check](https://img.shields.io/badge/RLS%20checked-rls--open--check-3ECF8E)](https://github.com/LarytheLord/rls-open-check)
 ```
 
 ## Install

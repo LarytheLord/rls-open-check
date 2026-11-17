@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { run } from "../src/cli.js";
@@ -18,13 +19,16 @@ describe("rule docs links", () => {
     expect(rules).toHaveLength(RULES.length);
     for (const r of rules) expect(r.helpUri).toBe(BASE + r.id.toLowerCase());
   });
-  it("text output lists each fired rule's docs link once", async () => {
+  it("each rule has exactly one README heading, so its anchor resolves", () => {
+    const lines = readFileSync(join(import.meta.dirname, "..", "README.md"), "utf8").split("\n");
+    for (const { id } of RULES) expect(lines.filter((l) => l === "### " + id)).toHaveLength(1);
+  });
+  it("text output lists each fired rule's docs link once and no other", async () => {
     const r = await run([fx("mixed-app")]);
-    for (const id of ["R1", "R2", "R5", "R9"]) {
-      const line = `Docs: ${BASE}${id.toLowerCase()}`;
-      expect(r.stdout.split("\n").filter((l) => l === line)).toHaveLength(1);
-    }
-    expect(r.stdout).not.toContain(BASE + "r3");
+    const fired = new Set([...r.stdout.matchAll(/\] (R\d+) /g)].map((m) => m[1]));
+    expect(fired.size).toBeGreaterThan(1);
+    const docs = r.stdout.split("\n").filter((l) => l.startsWith("Docs:"));
+    expect(docs.sort()).toEqual([...fired].map((id) => `Docs: ${BASE}${id.toLowerCase()}`).sort());
   });
   it("prints one docs line for a rule that fires several times", async () => {
     const r = await run([fx("r6-bad")]);
@@ -35,8 +39,16 @@ describe("rule docs links", () => {
   it("prints no docs line when nothing fired", async () => {
     expect((await run([fx("r1-good")])).stdout).not.toContain("Docs:");
   });
-  it("does not link to a commercial site", async () => {
-    const r = await run([fx("mixed-app")]);
-    expect(r.stdout).not.toMatch(/guilds\.work/);
+  it("only links to the project README anchors", async () => {
+    const text = (await run([fx("mixed-app")])).stdout;
+    const sarif = (await run(["--format", "sarif", fx("mixed-app")])).stdout;
+    for (const out of [text, sarif]) {
+      const urls = (out.match(/https?:\/\/[^\s"]+/g) ?? []).filter((u) => !u.includes("sarif-schema"));
+      expect(urls.length).toBeGreaterThan(0);
+      for (const u of urls) expect(u.startsWith(BASE)).toBe(true);
+    }
+  });
+  it("keeps Docs lines out of JSON output", async () => {
+    expect((await run(["--format", "json", fx("mixed-app")])).stdout).not.toContain("Docs:");
   });
 });
