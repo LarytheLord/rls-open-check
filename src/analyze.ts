@@ -709,7 +709,8 @@ export async function analyzeSources(
   return { filesScanned: sources.map((s) => s.file), findings, ignored, warnings };
 }
 
-const IGNORE_RE = /^\s*--\s*rls-open-check-ignore\s+(R\d+(?:\s*,\s*R\d+)*)\s*$/i;
+/** Form: -- rls-open-check-ignore R2[, R7] [-- reason]. A -- comment alone on its line. */
+const IGNORE_RE = /^\s*--\s*rls-open-check-ignore\s+(R\d+(?:\s*,\s*R\d+)*)(?:\s+--.*)?\s*$/i;
 
 /** True when the line directly above the finding is an ignore comment naming its rule. */
 function isIgnored(f: Finding, lines: string[] | undefined): boolean {
