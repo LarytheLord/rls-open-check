@@ -45,7 +45,8 @@ describe("R2 open policy for anon or public", () => {
     expect(f[0].severity).toBe("high");
   });
   it("does not flag real conditions, authenticated reads or restrictive policies", async () => {
-    expect((await scan("r2-good")).findings).toEqual([]);
+    // The only finding is R10 for "auth read" (authenticated SELECT USING (true)); no R2 or R3.
+    expect(rules((await scan("r2-good")).findings)).toEqual(["R10"]);
   });
 });
 
@@ -69,7 +70,8 @@ describe("R3 authenticated can change anyone's rows", () => {
     expect(f[0].fix).toContain("WITH CHECK");
   });
   it("does not flag owner checks on INSERT, restrictive policies or SELECT", async () => {
-    expect((await scan("r3-insert-good")).findings).toEqual([]);
+    // The only finding is R10 for "read all"; no R3.
+    expect(rules((await scan("r3-insert-good")).findings)).toEqual(["R10"]);
   });
 });
 
@@ -309,6 +311,91 @@ describe("R7 grant without matching RLS policy", () => {
       { file: "a.sql", sql: "create table app.t (id int); grant select on app.t to authenticated;" },
     ]);
     expect(only(r.findings, "R7")).toEqual([]);
+  });
+});
+
+describe("R10 authenticated can read every row", () => {
+  it("flags SELECT USING (true) for authenticated: medium with an owner column, low without", async () => {
+    const f = only((await scan("r10-bad")).findings, "R10");
+    expect(f.map((x) => [x.object, x.severity])).toEqual([
+      ["public.notes.read all", "medium"],
+      ["public.docs.docs read all", "medium"],
+      ["public.countries.countries read", "low"],
+    ]);
+    expect(f[0].message).toContain("any logged-in user can read every row");
+  });
+  it("does not flag owner checks, anon (R2), restrictive, RLS off, or UPDATE (R3)", async () => {
+    const r = await scan("r10-good");
+    expect(only(r.findings, "R10")).toEqual([]);
+    expect(rules(r.findings).sort()).toEqual(["R1", "R2", "R3"]);
+  });
+  it("does not flag the realistic owner fix, in a later migration or ALTER POLICY", async () => {
+    const base = `create table public.notes (id int, user_id uuid);
+alter table public.notes enable row level security;
+create policy "p" on public.notes for select to authenticated using (true);`;
+    const dropped = await analyzeSources([
+      { file: "a.sql", sql: base },
+      { file: "b.sql", sql: `drop policy "p" on public.notes; create policy "p" on public.notes for select to authenticated using ((select auth.uid()) = user_id);` },
+    ]);
+    expect(dropped.findings).toEqual([]);
+    const altered = await analyzeSources([
+      { file: "a.sql", sql: base },
+      { file: "b.sql", sql: `alter policy "p" on public.notes using ((select auth.uid()) = user_id);` },
+    ]);
+    expect(altered.findings).toEqual([]);
+  });
+});
+
+describe("R11 policy only checks that someone is logged in", () => {
+  it("flags auth.uid() IS NOT NULL and auth.role() = 'authenticated' on any command", async () => {
+    const f = only((await scan("r11-bad")).findings, "R11");
+    expect(f.map((x) => [x.object, x.severity])).toEqual([
+      ["public.notes.logged in read", "medium"],
+      ["public.notes.wrapped uid", "medium"],
+      ["public.notes.role check", "medium"],
+      ["public.notes.insert any", "medium"],
+      ["public.notes.both", "medium"],
+      ["public.tags.tags read", "low"],
+    ]);
+    expect(f[0].message).toContain("any logged-in user can read every row");
+    expect(f[3].message).toContain("insert");
+  });
+  it("does not flag the realistic owner fix or anon, restrictive and true policies", async () => {
+    const r = await scan("r11-good");
+    expect(only(r.findings, "R11")).toEqual([]);
+  });
+  it("does not flag once the policy is changed to compare auth.uid() to a column", async () => {
+    const r = await analyzeSources([
+      { file: "a.sql", sql: `create table public.n (id int, user_id uuid); alter table public.n enable row level security;
+create policy "p" on public.n for select to authenticated using (auth.uid() is not null);` },
+      { file: "b.sql", sql: `alter policy "p" on public.n using (auth.uid() = user_id);` },
+    ]);
+    expect(r.findings).toEqual([]);
+  });
+});
+
+describe("R12 anyone can insert rows", () => {
+  it("flags an anon or no-TO INSERT whose WITH CHECK never reads the caller", async () => {
+    const f = only((await scan("r12-bad")).findings, "R12");
+    expect(f.map((x) => [x.object, x.severity])).toEqual([
+      ["public.messages.anon insert", "medium"],
+      ["public.messages.default insert", "medium"],
+      ["public.messages.pub insert", "medium"],
+    ]);
+    expect(f[0].message).toContain("anyone can insert rows");
+  });
+  it("does not flag auth.uid()/auth.jwt() checks, authenticated-only, true (R2), restrictive or opaque checks", async () => {
+    const r = await scan("r12-good");
+    expect(only(r.findings, "R12")).toEqual([]);
+    expect(rules(r.findings)).toEqual(["R2"]);
+  });
+  it("does not flag the realistic fix of adding auth.uid() = user_id", async () => {
+    const r = await analyzeSources([
+      { file: "a.sql", sql: `create table public.m (id int, user_id uuid); alter table public.m enable row level security;
+create policy "p" on public.m for insert to anon with check (user_id is null);` },
+      { file: "b.sql", sql: `alter policy "p" on public.m with check (auth.uid() = user_id);` },
+    ]);
+    expect(r.findings).toEqual([]);
   });
 });
 
