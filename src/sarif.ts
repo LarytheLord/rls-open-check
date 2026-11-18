@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { RULES } from "./rules.js";
+import { RULES, ruleDocsUrl } from "./rules.js";
 import type { AnalysisResult, Severity } from "./types.js";
 
 const SCHEMA = "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json";
@@ -55,6 +55,7 @@ export function formatSarif(
               name: x.name,
               shortDescription: { text: x.description },
               help: { text: x.description },
+              helpUri: ruleDocsUrl(x.id),
               defaultConfiguration: { level: LEVEL[x.severity] },
               properties: { "security-severity": SECURITY_SEVERITY[x.severity], tags: ["security", "supabase", "rls"] },
             })),

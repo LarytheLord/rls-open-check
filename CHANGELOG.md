@@ -24,6 +24,12 @@ Keep a Changelog, and the project uses Semantic Versioning.
   applied in file order. Follows splinter lints 0028 and 0029. Trigger functions
   are skipped.
 - R8 and R9 are listed in the SARIF rule metadata.
+- Every rule has a stable `### R1` style heading in the README, and each SARIF
+  rule carries a `helpUri` that points to it
+  (`https://github.com/LarytheLord/rls-open-check#r1`).
+- Text output ends with one `Docs: <url>` line per rule that fired, not per
+  finding.
+- README section "Show that you check" with a badge snippet for CI users.
 
 ### Changed
 

@@ -42,6 +42,8 @@ supabase/migrations/20261116_init.sql:5  [critical] R1  public.payments
 
 Scanned 1 file(s). 2 finding(s): 1 critical, 1 high, 0 medium, 0 low.
 2 finding(s) at or above "high": failing.
+Docs: https://github.com/LarytheLord/rls-open-check#r1
+Docs: https://github.com/LarytheLord/rls-open-check#r2
 Static check of migration files only. A clean result is not proof of safety.
 ```
 
@@ -100,6 +102,8 @@ supabase/migrations/20240101000000_init.sql:5  [critical] R1  public.notes
 
 Scanned 1 file(s). 2 finding(s): 2 critical, 0 high, 0 medium, 0 low.
 2 finding(s) at or above "high": failing.
+Docs: https://github.com/LarytheLord/rls-open-check#r1
+Docs: https://github.com/LarytheLord/rls-open-check#r2
 Static check of migration files only. A clean result is not proof of safety.
 ```
 
@@ -149,6 +153,46 @@ Each finding has a rule id, a severity and a one-line fix hint.
 | R7 | high (RLS off) or low (RLS on) | A `public` table with `GRANT SELECT`, `INSERT`, `UPDATE` or `DELETE` to `anon` or `authenticated`, where RLS is off or no policy covers that command for that role | Enable RLS and add a policy for the command, or `REVOKE` it |
 | R8 | high | A policy whose `USING` or `WITH CHECK` reads `user_metadata` or `raw_user_meta_data`, for example `auth.jwt() -> 'user_metadata'`. Users can edit their own `user_metadata`, so they can pass the check. Like Supabase splinter lint 0015 | Use `app_metadata` (only the server can change it) or a table you control |
 | R9 | medium | A `SECURITY DEFINER` function in `public` that `anon` or `authenticated` can run: `GRANT EXECUTE` to either role or `PUBLIC`, or no `REVOKE EXECUTE ... FROM PUBLIC` (Postgres grants EXECUTE to `PUBLIC` on new functions). Like splinter lints 0028 and 0029. Separate from R5, so one function can get both | `REVOKE EXECUTE ON FUNCTION ... FROM PUBLIC, anon, authenticated`, then grant only to roles that need it |
+
+**Rule reference.** Each rule has its own heading, so `https://github.com/LarytheLord/rls-open-check#r1`
+(and `#r2` and so on) links straight to it. SARIF `helpUri` and the "Docs:"
+lines in text output point here.
+
+### R1
+
+TableWithoutRls. A table in `public` never gets `ENABLE ROW LEVEL SECURITY`, so anyone with the API key can read and write it. See the table above for severity and the fix, and the details below.
+
+### R2
+
+OpenPolicyForAnon. A policy gives `anon` or `public` a condition that is always true, so the table is open to everyone. See the table above for severity and the fix, and the details below.
+
+### R3
+
+AuthenticatedChangesAnyRow. A policy lets any logged-in user update, delete or insert any row. See the table above for severity and the fix, and the details below.
+
+### R4
+
+AnonGrantWithoutRls. `anon` has privileges on a table that has no RLS. See the table above for severity and the fix, and the details below.
+
+### R5
+
+SecurityDefinerWithoutSearchPath. A `SECURITY DEFINER` function without `SET search_path` can be tricked into running another schema's objects. See the table above for severity and the fix, and the details below.
+
+### R6
+
+RlsDisabled. RLS was turned off on a `public` table and never turned back on. See the table above for severity and the fix, and the details below.
+
+### R7
+
+GrantWithoutPolicy. `anon` or `authenticated` has a table privilege, and RLS is off or no policy covers that command. See the table above for severity and the fix, and the details below.
+
+### R8
+
+PolicyReadsUserMetadata. A policy reads `user_metadata` or `raw_user_meta_data`, which users can edit themselves. See the table above for severity and the fix, and the details below.
+
+### R9
+
+SecurityDefinerExecutableByApiRole. A `SECURITY DEFINER` function in `public` can be run by `anon` or `authenticated` through the Data API. See the table above for severity and the fix, and the details below.
 
 Details:
 
@@ -357,6 +401,15 @@ jobs:
 
 SARIF levels: critical and high are `error`, medium is `warning`, low is
 `note`. Parse warnings go in the run's notifications, not in the results.
+
+## Show that you check
+
+If you run rls-open-check in CI, you can add a badge to your README. It is a
+static badge: it says you run the check, not that the last run passed.
+
+```markdown
+[![RLS checked: rls-open-check](https://img.shields.io/badge/RLS%20checked-rls--open--check-3ECF8E)](https://github.com/LarytheLord/rls-open-check)
+```
 
 ## Install
 
