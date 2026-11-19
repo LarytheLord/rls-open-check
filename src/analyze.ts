@@ -14,8 +14,12 @@ interface TableState {
   anonGrant: { loc: Loc; privs: Set<string> } | undefined;
   /** DML privileges (select, insert, update, delete) per API role, for R7. */
   dml: Map<ApiRole, DmlGrant>;
-  /** Column names seen in CREATE TABLE and ALTER TABLE, lowercased (for R10 and R11). */
+  /** Column names seen in CREATE TABLE and ALTER TABLE, as Postgres stores them (for R10 and R11). */
   columns: Set<string>;
+  /** False when the column list cannot be known (CREATE TABLE AS, LIKE or INHERITS of a table not in the scanned files). */
+  columnsKnown: boolean;
+  /** DML privileges explicitly revoked from anon in the scanned SQL, and not granted again since (for R12). */
+  anonRevoked: Set<string>;
 }
 
 type ApiRole = "anon" | "authenticated";
@@ -178,7 +182,8 @@ export function readsUserMetadata(node: unknown): boolean {
 }
 
 /** Column names that mean "this row belongs to someone" (R10, R11). */
-const OWNER_COLUMNS = ["user_id", "owner_id", "created_by", "profile_id"];
+const OWNER_COLUMNS = ["user_id", "owner_id", "created_by", "profile_id", "author_id", "account_id", "tenant_id", "org_id"];
+const OWNER_COLUMNS_TEXT = OWNER_COLUMNS.slice(0, -1).join(", ") + " or " + OWNER_COLUMNS[OWNER_COLUMNS.length - 1];
 
 /** Function name parts of a FuncCall, lowercased, for example ["auth", "uid"]. */
 function funcParts(fc: Node): string[] {
@@ -232,7 +237,8 @@ function walk(node: unknown, fn: (n: Node) => void) {
 /**
  * R12 helper: true when a WITH CHECK clearly never looks at who the caller is.
  * It returns false (no finding) when it cannot tell: a subquery, a setting read,
- * a schema-qualified function, or a function defined in the scanned SQL.
+ * a schema-qualified function (other than auth.role(), which only names a role),
+ * or a function defined in the scanned SQL.
  */
 function ignoresCaller(expr: Node | undefined, userFns: Set<string>): boolean {
   if (!expr) return false;
@@ -241,8 +247,9 @@ function ignoresCaller(expr: Node | undefined, userFns: Set<string>): boolean {
     if (n.SubLink) sees = true;
     if (n.FuncCall) {
       const p = funcParts(n.FuncCall);
+      const namesRoleOnly = p.length === 2 && p[0] === "auth" && p[1] === "role"; // a role, not a person
       if (p[0] === "auth" && ["uid", "jwt", "email"].includes(p[1])) sees = true;
-      else if (p.length > 1 && p[0] !== "pg_catalog") sees = true;
+      else if (!namesRoleOnly && p.length > 1 && p[0] !== "pg_catalog") sees = true;
       else if (p.length === 1 && (p[0] === "current_setting" || userFns.has(p[0]))) sees = true;
     }
   });
@@ -263,13 +270,13 @@ class Analyzer {
   private table(key: string, schema: string, name: string): TableState {
     let t = this.tables.get(key);
     if (!t) {
-      t = { schema, name, created: undefined, rls: false, disabledAt: undefined, anonGrant: undefined, dml: new Map(), columns: new Set() };
+      t = { schema, name, created: undefined, rls: false, disabledAt: undefined, anonGrant: undefined, dml: new Map(), columns: new Set(), columnsKnown: true, anonRevoked: new Set() };
       this.tables.set(key, t);
     }
     return t;
   }
 
-  private createTable(rv: Node, loc: Loc, elts?: Node[]) {
+  private createTable(rv: Node, loc: Loc, elts?: Node[], inherits?: Node[]) {
     if (rv.relpersistence === "t") return; // temp table
     const schema = rv.schemaname ?? DEFAULT_SCHEMA;
     const key = tkey(schema, rv.relname);
@@ -277,7 +284,23 @@ class Analyzer {
     if (this.tables.get(key)?.created) return;
     const t = this.table(key, schema, rv.relname);
     t.created = loc;
-    for (const e of elts ?? []) if (e.ColumnDef?.colname) t.columns.add(String(e.ColumnDef.colname).toLowerCase());
+    // Columns come from the definitions and, for LIKE, INHERITS and PARTITION OF, from the
+    // source table when it is in the scanned files. With no list (CREATE TABLE AS) or an
+    // unseen source the columns are unknown, and R10/R11 do not downgrade on them.
+    if (!elts) t.columnsKnown = false;
+    const copyFrom = (src: Node | undefined) => {
+      const from = src ? this.tables.get(rangeVarKey(src)) : undefined;
+      if (!from) t.columnsKnown = false;
+      else {
+        for (const c of from.columns) t.columns.add(c);
+        if (!from.columnsKnown) t.columnsKnown = false;
+      }
+    };
+    for (const e of elts ?? []) {
+      if (e.ColumnDef?.colname) t.columns.add(String(e.ColumnDef.colname));
+      else if (e.TableLikeClause) copyFrom(e.TableLikeClause.relation);
+    }
+    for (const r of inherits ?? []) copyFrom(r.RangeVar);
     const d = this.defaultAnon.get(schema) ?? this.defaultAnon.get("*");
     if (d) t.anonGrant = { loc: d.loc, privs: new Set(d.privs) };
     const dd = this.defaultDml.get(schema) ?? this.defaultDml.get("*");
@@ -335,6 +358,9 @@ class Analyzer {
     } else return;
     for (const t of targets) {
       for (const role of apiRoles) applyDml(t.dml, role, g.is_grant === true, privs, loc);
+      if (apiRoles.includes("anon")) {
+        for (const pv of dmlPrivs(privs)) g.is_grant === true ? t.anonRevoked.delete(pv) : t.anonRevoked.add(pv);
+      }
       if (isAnonLike(grantees)) this.updateGrant(t, g.is_grant === true, privs, loc);
     }
   }
@@ -446,9 +472,9 @@ class Analyzer {
     for (const c of s.cmds ?? []) {
       const sub = c.AlterTableCmd?.subtype;
       if (sub === "AT_AddColumn" && c.AlterTableCmd.def?.ColumnDef?.colname) {
-        this.table(key, rv.schemaname ?? DEFAULT_SCHEMA, rv.relname).columns.add(String(c.AlterTableCmd.def.ColumnDef.colname).toLowerCase());
+        this.table(key, rv.schemaname ?? DEFAULT_SCHEMA, rv.relname).columns.add(String(c.AlterTableCmd.def.ColumnDef.colname));
       } else if (sub === "AT_DropColumn" && c.AlterTableCmd.name) {
-        this.tables.get(key)?.columns.delete(String(c.AlterTableCmd.name).toLowerCase());
+        this.tables.get(key)?.columns.delete(String(c.AlterTableCmd.name));
       } else if (sub === "AT_EnableRowSecurity") {
         const t = this.table(key, rv.schemaname ?? DEFAULT_SCHEMA, rv.relname);
         t.rls = true;
@@ -467,7 +493,7 @@ class Analyzer {
     const s = node[type];
     switch (type) {
       case "CreateStmt":
-        this.createTable(s.relation, loc, s.tableElts);
+        this.createTable(s.relation, loc, s.tableElts ?? [], s.inhRelations);
         break;
       case "CreateTableAsStmt":
         if (s.objtype === "OBJECT_TABLE" && s.into?.rel) this.createTable(s.into.rel, loc);
@@ -488,7 +514,10 @@ class Analyzer {
           }
         } else if (s.renameType === "OBJECT_COLUMN" && s.relation) {
           const cols = this.tables.get(rangeVarKey(s.relation))?.columns;
-          if (cols && cols.delete(String(s.subname).toLowerCase())) cols.add(String(s.newname).toLowerCase());
+          if (cols) {
+            cols.delete(String(s.subname));
+            cols.add(String(s.newname));
+          }
         } else if (s.renameType === "OBJECT_POLICY" && s.relation) {
           const tk = rangeVarKey(s.relation);
           const p = this.policies.get(`${tk}::${s.subname}`);
@@ -736,8 +765,10 @@ class Analyzer {
       if (t && !t.rls) continue;
       if (!p.permissive) continue;
       const object = `${p.table}.${p.name}`;
-      const hasOwner = !!t && OWNER_COLUMNS.some((c) => t.columns.has(c));
+      // With an unknown column list (CREATE TABLE AS, LIKE of an unseen table) assume an owner column exists.
+      const hasOwner = !!t && (!t.columnsKnown || OWNER_COLUMNS.some((c) => t.columns.has(c)));
       const loggedIn = p.roles.includes("authenticated") || p.roles.includes("public");
+      const noOwnerNote = ` The table has no ${OWNER_COLUMNS_TEXT} column, so this may be shared data on purpose.`;
 
       if (p.cmd === "select" && p.roles.includes("authenticated") && !isAnonLike(p.roles) && isTrueConst(p.qual)) {
         out.push({
@@ -746,37 +777,48 @@ class Analyzer {
           object,
           file: p.loc.file,
           line: p.loc.line,
-          message: `Policy "${p.name}" on ${p.table} has USING (true) for authenticated, so any logged-in user can read every row.${hasOwner ? "" : " The table has no user_id, owner_id, created_by or profile_id column, so this may be shared data on purpose."}`,
+          message: `Policy "${p.name}" on ${p.table} has USING (true) for authenticated, so any logged-in user can read every row.${hasOwner ? "" : noOwnerNote}`,
           fix: `Limit the rows to their owner, for example USING ((select auth.uid()) = user_id), if the rows are not meant to be shared.`,
         });
       }
 
-      if (loggedIn) {
-        const readsUsing = ["select", "update", "delete", "all"].includes(p.cmd) && isLoggedInOnly(p.qual);
-        const writesCheck = ["insert", "update", "all"].includes(p.cmd) && isLoggedInOnly(p.withCheck);
-        if (readsUsing || writesCheck) {
-          const what = p.cmd === "select" ? "read" : p.cmd === "all" ? "read and change" : p.cmd === "insert" ? "insert" : p.cmd;
-          const shared = p.cmd === "select" && !hasOwner;
+      // R11 leaves a policy to R2 or R3 when one of them already reported it (a clause that is exactly true).
+      if (loggedIn && !out.some((f) => (f.rule === "R2" || f.rule === "R3") && f.object === object)) {
+        const usingHit = ["select", "update", "delete", "all"].includes(p.cmd) && isLoggedInOnly(p.qual);
+        const checkHit = ["insert", "update", "all"].includes(p.cmd) && isLoggedInOnly(p.withCheck);
+        if (usingHit || checkHit) {
+          let what: string;
+          if (usingHit) {
+            // FOR ALL with its own WITH CHECK that is not logged-in-only: the rows are open to read, writes are checked.
+            const readOnly = p.cmd === "all" && p.withCheck && !checkHit;
+            what = `${p.cmd === "select" || readOnly ? "read" : p.cmd === "all" ? "read and change" : p.cmd} every row`;
+          } else {
+            what = `${p.cmd === "insert" ? "insert" : "write"} rows with any values`;
+          }
+          const shared = usingHit && p.cmd === "select" && !hasOwner;
           out.push({
             rule: "R11",
             severity: shared ? "low" : "medium",
             object,
             file: p.loc.file,
             line: p.loc.line,
-            message: `Policy "${p.name}" on ${p.table} only checks that the caller is logged in, so any logged-in user can ${what} every row${p.cmd === "insert" ? " as anyone" : ""}.${shared ? " The table has no user_id, owner_id, created_by or profile_id column, so this may be shared data on purpose." : ""}`,
+            message: `Policy "${p.name}" on ${p.table} only checks that the caller is logged in, so any logged-in user can ${what}.${usingHit ? "" : " Nothing ties the row to its owner."}${shared ? noOwnerNote : ""}`,
             fix: `Compare auth.uid() to a column of the row, for example (select auth.uid()) = user_id.`,
           });
         }
       }
 
-      if (p.cmd === "insert" && isAnonLike(p.roles) && p.withCheck && !isTrueConst(p.withCheck) && ignoresCaller(p.withCheck, userFns)) {
+      // For FOR ALL, Postgres checks new rows with WITH CHECK, or with USING when WITH CHECK is absent.
+      const insertCheck = p.cmd === "insert" ? p.withCheck : p.cmd === "all" ? p.withCheck ?? p.qual : undefined;
+      if (insertCheck && isAnonLike(p.roles) && !isTrueConst(insertCheck) && !isLoggedInOnly(insertCheck) && ignoresCaller(insertCheck, userFns)) {
+        const revoked = !!t?.anonRevoked.has("insert");
         out.push({
           rule: "R12",
-          severity: "medium",
+          severity: revoked ? "low" : "medium",
           object,
           file: p.loc.file,
           line: p.loc.line,
-          message: `Policy "${p.name}" on ${p.table} lets ${p.roles.includes("anon") ? "anon" : "public"} insert rows, and its WITH CHECK never reads auth.uid() or auth.jwt(), so anyone can insert rows.`,
+          message: `Policy "${p.name}" on ${p.table} lets ${p.roles.includes("anon") ? "anon" : "public"} insert rows, and its ${p.cmd === "all" && !p.withCheck ? "USING" : "WITH CHECK"} never reads auth.uid(), auth.jwt() or auth.email(), so anyone can insert rows.${revoked ? " The scanned SQL has REVOKE INSERT from anon on this table, so anon may not be able to use it." : ""}`,
           fix: `If this is not a public form, use TO authenticated and WITH CHECK ((select auth.uid()) = user_id). If it is, keep the check strict and add -- rls-open-check-ignore R12 above it.`,
         });
       }

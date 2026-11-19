@@ -153,9 +153,9 @@ Each finding has a rule id, a severity and a one-line fix hint.
 | R7 | high (RLS off) or low (RLS on) | A `public` table with `GRANT SELECT`, `INSERT`, `UPDATE` or `DELETE` to `anon` or `authenticated`, where RLS is off or no policy covers that command for that role | Enable RLS and add a policy for the command, or `REVOKE` it |
 | R8 | high | A policy whose `USING` or `WITH CHECK` reads `user_metadata` or `raw_user_meta_data`, for example `auth.jwt() -> 'user_metadata'`. Users can edit their own `user_metadata`, so they can pass the check. Like Supabase splinter lint 0015 | Use `app_metadata` (only the server can change it) or a table you control |
 | R9 | medium | A `SECURITY DEFINER` function in `public` that `anon` or `authenticated` can run: `GRANT EXECUTE` to either role or `PUBLIC`, or no `REVOKE EXECUTE ... FROM PUBLIC` (Postgres grants EXECUTE to `PUBLIC` on new functions). Like splinter lints 0028 and 0029. Separate from R5, so one function can get both | `REVOKE EXECUTE ON FUNCTION ... FROM PUBLIC, anon, authenticated`, then grant only to roles that need it |
-| R10 | medium (low if the table has no `user_id`, `owner_id`, `created_by` or `profile_id` column) | A permissive `SELECT` policy for `authenticated` with `USING (true)`: any logged-in user can read every row | Use `USING ((select auth.uid()) = user_id)` unless the rows are shared on purpose |
+| R10 | medium (low if the table has no owner column, see below) | A permissive `SELECT` policy for `authenticated` with `USING (true)`: any logged-in user can read every row | Use `USING ((select auth.uid()) = user_id)` unless the rows are shared on purpose |
 | R11 | medium (low for SELECT on a table with no owner column) | A policy whose `USING` or `WITH CHECK` is only `auth.uid() IS NOT NULL` or `auth.role() = 'authenticated'` (alone or joined with `AND`), with no comparison of `auth.uid()` to a column. Applies to `authenticated` and to a policy with no `TO` clause | Compare `auth.uid()` to a column of the row |
-| R12 | medium | An `INSERT` policy for `anon`, or with no `TO` clause, whose `WITH CHECK` never reads `auth.uid()` or `auth.jwt()` (and is not plain `true`, which is R2): anyone can insert rows | Use `TO authenticated` and `WITH CHECK ((select auth.uid()) = user_id)`, or accept it with an ignore comment if it is a public form |
+| R12 | medium | An `INSERT` policy for `anon`, or with no `TO` clause, whose `WITH CHECK` never reads `auth.uid()`, `auth.jwt()` or `auth.email()` (and is not plain `true`, which is R2): anyone can insert rows. Low if the scanned SQL revokes `INSERT` from `anon` on that table | Use `TO authenticated` and `WITH CHECK ((select auth.uid()) = user_id)`, or accept it with an ignore comment if it is a public form |
 
 **Rule reference.** Each rule has its own heading, so `https://github.com/LarytheLord/rls-open-check#r1`
 (and `#r2` and so on) links straight to it. SARIF `helpUri` and the "Docs:"
@@ -258,11 +258,17 @@ Details:
   through such a default.
 - **R10 in detail.** The tool reads the columns from `CREATE TABLE` and
   `ALTER TABLE ... ADD COLUMN`, `DROP COLUMN` and `RENAME COLUMN`. If the table
-  has a column named `user_id`, `owner_id`, `created_by` or `profile_id`, the
+  has a column named `user_id`, `owner_id`, `created_by`, `profile_id`, `author_id`, `account_id`, `tenant_id` or `org_id`, the
   finding is medium. If not, it is low, because it may be shared data
   (countries, plans, public posts). **It cannot know whether the data is meant
-  to be public to every logged-in user.** A table whose definition is not in the
-  scanned files has no known columns, so it gets low. A policy for `anon` or
+  to be public to every logged-in user.** Names are matched as Postgres stores them, so a
+  quoted `"User_ID"` is not `user_id`. `LIKE`, `INHERITS` and `PARTITION OF` copy
+  the columns of the source table when it is in the scanned files. When the
+  columns cannot be known (`CREATE TABLE ... AS`, or a `LIKE` or `INHERITS` source
+  that is not in the scanned files), the table is treated as having an owner
+  column, so the finding stays medium. A policy on a table whose `CREATE TABLE`
+  is not in the scanned files has no known columns and gets low. Owner column
+  names beyond the list above are not recognised. A policy for `anon` or
   with no `TO` clause is R2, not R10, and `USING (true)` for UPDATE, DELETE or
   ALL is R3.
 - **R11 in detail.** Matches `auth.uid() IS NOT NULL`, `auth.role() =
@@ -273,13 +279,28 @@ Details:
   `true` is R10 or R3, not R11. Same low severity as R10 for SELECT on a table
   with no owner column. **It cannot know whether every logged-in user is meant to
   see the rows.** A `WITH CHECK` of this form on INSERT or UPDATE lets a user
-  write a row that names someone else as the owner.
+  write a row that names someone else as the owner. The message says which clause
+  matched: a match in `USING` says the user can read, update or delete every row,
+  and a match only in `WITH CHECK` says the user can write rows with any values
+  (for example `USING (user_id = auth.uid()) WITH CHECK (auth.uid() IS NOT NULL)`).
+  A policy that R2 or R3 already reports (a clause that is exactly `true`) is not
+  reported again as R11. Not matched, so these are false negatives:
+  `auth.jwt() ->> 'role' = 'authenticated'` and a cast such as
+  `auth.uid()::text IS NOT NULL` or `'authenticated'::text`.
 - **R12 in detail.** Reported when an `INSERT` policy for `anon` or `public` has
   a `WITH CHECK` that does not call `auth.uid()`, `auth.jwt()` or `auth.email()`.
-  It does not report when it cannot see the whole check: a subquery, a
-  `current_setting(...)` read, a function in another schema, or a function that
-  is created in the scanned SQL. A check of `true` is R2. `INSERT` policies for
-  `authenticated` and `FOR ALL` policies are not looked at by R12. **It cannot
+  `auth.role()` only names a role, so `WITH CHECK (auth.role() = 'anon')` is
+  reported. It does not report when it cannot see the whole check: a subquery, a
+  `current_setting(...)` read, any other function in another schema (for example
+  `extensions.*`), or a function that is created in the scanned SQL. Functions
+  of your own are matched by bare name in any schema, so one named like a
+  built-in (`length`) also suppresses it. A check of `true` is R2. `INSERT` policies for
+  `authenticated` are not looked at by R12. A `FOR ALL` policy for `anon` is
+  checked as an INSERT policy, using its `WITH CHECK`, or its `USING` when it has
+  no `WITH CHECK`, as Postgres does. A `WITH CHECK` that is only a logged-in check
+  is R11. The severity is low when the scanned SQL has `REVOKE INSERT ... FROM anon`
+  on the table (and no later `GRANT`); grants Supabase applies by default are not
+  visible to this tool, so without a `REVOKE` in your files it stays medium. **It cannot
   know that an anonymous form is intended** (a contact form, a waitlist, event
   logging). If so, tighten the check (length, allowed values) and add
   `-- rls-open-check-ignore R12 -- public form` above the policy.
@@ -337,7 +358,7 @@ request or a fork. Overlap, checked against splinter's lint SQL (commit cd238c8)
 | R7 | no direct match (0008 flags RLS on with no policy at all) |
 | R8 | 0015 rls_references_user_metadata |
 | R9 | 0028 (anon) and 0029 (authenticated) |
-| R10 | no direct match (0024 skips `USING (true)` on SELECT) |
+| R10 | no direct match (see the R2 row for how 0024 treats `USING (true)` on SELECT; I did not re-check that for R10) |
 | R11 | no direct match |
 | R12 | no direct match |
 

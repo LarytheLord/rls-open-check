@@ -24,12 +24,16 @@ Keep a Changelog, and the project uses Semantic Versioning.
   applied in file order. Follows splinter lints 0028 and 0029. Trigger functions
   are skipped.
 - Rule R10: `SELECT` policy for `authenticated` with `USING (true)`. Medium when
-  the table has a `user_id`, `owner_id`, `created_by` or `profile_id` column,
-  low when it has none.
+  the table has an owner column (`user_id`, `owner_id`, `created_by`,
+  `profile_id`, `author_id`, `account_id`, `tenant_id` or `org_id`), low when it
+  has none. Tables whose columns cannot be known stay medium.
 - Rule R11: policy whose `USING` or `WITH CHECK` is only `auth.uid() IS NOT NULL`
-  or `auth.role() = 'authenticated'`, with no comparison to a column.
+  or `auth.role() = 'authenticated'`, with no comparison to a column. The message
+  names the clause that matched, and a policy already reported as R2 or R3 is not
+  reported again.
 - Rule R12: `INSERT` policy for `anon` or with no `TO` clause whose `WITH CHECK`
-  never reads `auth.uid()` or `auth.jwt()`.
+  never reads `auth.uid()`, `auth.jwt()` or `auth.email()`. `FOR ALL` policies for
+  `anon` are checked too, and a `REVOKE INSERT` from `anon` lowers it to low.
 - The analyzer now tracks column names per table.
 - R8 to R12 are listed in the SARIF rule metadata.
 - Every rule has a stable `### R1` style heading in the README, and each SARIF
