@@ -242,13 +242,22 @@ function walk(node: unknown, fn: (n: Node) => void) {
 function ignoresCaller(expr: Node | undefined, userFns: Set<string>): boolean {
   if (!expr) return false;
   let sees = false;
+  // auth.role() compared to 'anon' or 'public' names no caller; any other use is opaque.
+  const blindRole = new Set<Node>();
+  walk(expr, (n) => {
+    const a = n.A_Expr;
+    if (!a || a.kind !== "AEXPR_OP" || strings(a.name)[0] !== "=") return;
+    const lit = (c: Node | undefined) => ["anon", "public"].includes(String(c?.A_Const?.sval?.sval).toLowerCase());
+    for (const [x, y] of [[a.lexpr, a.rexpr], [a.rexpr, a.lexpr]]) {
+      if (x?.FuncCall && isAuthCall(x, "role") && lit(y)) blindRole.add(x.FuncCall);
+    }
+  });
   walk(expr, (n) => {
     if (n.SubLink) sees = true;
     if (n.FuncCall) {
       const p = funcParts(n.FuncCall);
       // auth.role() only names the caller's role, so it does not count as reading identity.
-      const isAuthRole = p.length === 2 && p[0] === "auth" && p[1] === "role";
-      if (isAuthRole) return;
+      if (blindRole.has(n.FuncCall)) return;
       if (p[0] === "auth" && ["uid", "jwt", "email"].includes(p[1])) sees = true;
       else if (p.length > 1 && p[0] !== "pg_catalog") sees = true;
       else if (p.length === 1 && (p[0] === "current_setting" || userFns.has(p[0]))) sees = true;
@@ -349,7 +358,9 @@ class Analyzer {
     for (const t of targets) {
       for (const role of apiRoles) applyDml(t.dml, role, g.is_grant === true, privs, loc);
       if (isAnonLike(grantees)) this.updateGrant(t, g.is_grant === true, privs, loc);
-      if (apiRoles.includes("anon") && dmlPrivs(privs).includes("insert")) t.anonInsertRevoked = g.is_grant !== true;
+      // Column-scoped grants and revokes do not decide whether the API can insert rows.
+      const columnScoped = (g.privileges ?? []).some((x: Node) => x.AccessPriv?.cols?.length);
+      if (!columnScoped && apiRoles.includes("anon") && dmlPrivs(privs).includes("insert")) t.anonInsertRevoked = g.is_grant !== true;
     }
   }
 
@@ -765,7 +776,7 @@ class Analyzer {
           object,
           file: p.loc.file,
           line: p.loc.line,
-          message: `Policy "${p.name}" on ${p.table} has USING (true) for authenticated, so any logged-in user can read every row.${hasOwner ? "" : " The table has no ${OWNER_COLUMNS_TEXT} column, so this may be shared data on purpose."}`,
+          message: `Policy "${p.name}" on ${p.table} has USING (true) for authenticated, so any logged-in user can read every row.${hasOwner ? "" : ` The table has no ${OWNER_COLUMNS_TEXT} column, so this may be shared data on purpose.`}`,
           fix: `Limit the rows to their owner, for example USING ((select auth.uid()) = user_id), if the rows are not meant to be shared.`,
         });
       }
@@ -794,14 +805,16 @@ class Analyzer {
         }
       }
 
+      // Low only when the policy is anon-only: a no-TO or TO public policy also covers other roles.
+      const anonOnly = p.roles.includes("anon") && !p.roles.includes("public") && !p.roles.includes("authenticated");
       if (p.cmd === "insert" && isAnonLike(p.roles) && p.withCheck && !isTrueConst(p.withCheck) && ignoresCaller(p.withCheck, userFns)) {
         out.push({
           rule: "R12",
-          severity: t?.anonInsertRevoked ? "low" : "medium",
+          severity: t?.anonInsertRevoked && anonOnly ? "low" : "medium",
           object,
           file: p.loc.file,
           line: p.loc.line,
-          message: `Policy "${p.name}" on ${p.table} lets ${p.roles.includes("anon") ? "anon" : "public"} insert rows, and its WITH CHECK never reads auth.uid(), auth.jwt() or auth.email(), so anyone can insert rows.${t?.anonInsertRevoked ? " INSERT was revoked from anon in the scanned SQL, so the API may refuse it anyway." : ""}`,
+          message: `Policy "${p.name}" on ${p.table} lets ${p.roles.includes("anon") ? "anon" : "public"} insert rows, and its WITH CHECK never reads auth.uid(), auth.jwt() or auth.email(), so anyone can insert rows.${t?.anonInsertRevoked && anonOnly ? " INSERT was revoked from anon in the scanned SQL, so the API may refuse it anyway." : ""}`,
           fix: `If this is not a public form, use TO authenticated and WITH CHECK ((select auth.uid()) = user_id). If it is, keep the check strict and add -- rls-open-check-ignore R12 above it.`,
         });
       }

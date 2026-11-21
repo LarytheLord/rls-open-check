@@ -454,7 +454,7 @@ create policy "p" on public.t for select to authenticated using (true);`);
     for (const v of variants) {
       const r = await run1(v + pol);
       expect([v, r.findings[0].severity]).toEqual([v, "medium"]);
-      expect(r.findings[0].message).not.toContain("no user_id");
+      expect(r.findings[0].message).not.toContain("column, so this may be shared");
     }
   });
   it("drops policies with the table (no orphan finding after DROP TABLE)", async () => {
@@ -545,6 +545,51 @@ describe("R12 more cases", () => {
     expect(only(revoked.findings, "R12").map((f) => f.severity)).toEqual(["low"]);
     const regrant = await run1(T("body text", pol) + ` revoke all on public.t from anon; grant insert on public.t to anon;`);
     expect(only(regrant.findings, "R12").map((f) => f.severity)).toEqual(["medium"]);
+  });
+});
+
+describe("review round 2", () => {
+  const COLS = "user_id, owner_id, created_by, profile_id, author_id, account_id, tenant_id or org_id";
+  it("prints the owner column list in low R10 and low R11 messages", async () => {
+    const r10 = await run1(T("body text", `create policy "p" on public.t for select to authenticated using (true);`));
+    expect(only(r10.findings, "R10")[0].message).toContain(COLS);
+    expect(only(r10.findings, "R10")[0].message).not.toContain("${");
+    const r11 = await run1(T("body text", `create policy "p" on public.t for select to authenticated using (auth.uid() is not null);`));
+    expect(only(r11.findings, "R11")[0].message).toContain(COLS);
+    expect(only(r11.findings, "R11")[0].message).not.toContain("${");
+  });
+  it("R12: auth.role() = 'authenticated' on a no-TO INSERT is R11 only, not R12", async () => {
+    const r = await run1(T("body text", `create policy "p" on public.t for insert with check (auth.role() = 'authenticated');`));
+    expect(rules(r.findings)).toEqual(["R11"]);
+  });
+  it("R12: auth.role() = 'public' and = 'anon' are caller-blind, either side", async () => {
+    for (const c of ["auth.role() = 'public'", "'anon' = auth.role()"]) {
+      const r = await run1(T("body text", `create policy "p" on public.t for insert to anon with check (${c});`));
+      expect([c, only(r.findings, "R12").length]).toEqual([c, 1]);
+    }
+  });
+  it("R12 low only for a TO anon policy; no-TO policies stay medium after a revoke", async () => {
+    const rev = ` revoke insert on public.t from anon;`;
+    const noTo = await run1(T("body text", `create policy "p" on public.t for insert with check (body is not null);`) + rev);
+    expect(only(noTo.findings, "R12").map((f) => f.severity)).toEqual(["medium"]);
+    const pub = await run1(T("body text", `create policy "p" on public.t for insert to public with check (body is not null);`) + rev);
+    expect(only(pub.findings, "R12").map((f) => f.severity)).toEqual(["medium"]);
+  });
+  it("a column-level REVOKE INSERT does not downgrade R12", async () => {
+    const pol = `create policy "p" on public.t for insert to anon with check (body is not null);`;
+    const r = await run1(T("body text", pol) + ` revoke insert (body) on public.t from anon;`);
+    expect(only(r.findings, "R12").map((f) => f.severity)).toEqual(["medium"]);
+  });
+  it("REVOKE FROM PUBLIC and ALL TABLES IN SCHEMA downgrade a TO anon policy", async () => {
+    const pol = `create policy "p" on public.t for insert to anon with check (body is not null);`;
+    for (const rv of [`revoke insert on public.t from public;`, `revoke all on all tables in schema public from anon;`]) {
+      const r = await run1(T("body text", pol) + " " + rv);
+      expect([rv, only(r.findings, "R12").map((f) => f.severity)]).toEqual([rv, ["low"]]);
+    }
+  });
+  it("a revoke issued before the table exists changes nothing", async () => {
+    const r = await run1(`revoke insert on public.t from anon; ` + T("body text", `create policy "p" on public.t for insert to anon with check (body is not null);`));
+    expect(only(r.findings, "R12").map((f) => f.severity)).toEqual(["medium"]);
   });
 });
 
