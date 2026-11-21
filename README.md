@@ -287,7 +287,7 @@ Details:
 - **R12 in detail.** Reported when an `INSERT` policy for `anon` or `public` has
   a `WITH CHECK` that does not call `auth.uid()`, `auth.jwt()` or `auth.email()`.
   `auth.role()` does not count, because it names the caller's role, not the
-  caller (`WITH CHECK (auth.role() = 'anon')` or `'public'` is reported; `auth.role() = 'authenticated'` is not R12, and R11 reports it instead). It does not report when it cannot see the whole check: a subquery, a
+  caller (`WITH CHECK (auth.role() = 'anon')` or `'public'` is reported; `auth.role() = 'authenticated'` is not R12, and R11 reports the bare form when the policy covers logged-in users; with extra conditions such as `AND length(body) < 500` neither rule fires). It does not report when it cannot see the whole check: a subquery, a
   `current_setting(...)` read, a function in another schema, or a function that
   is created in the scanned SQL. A check of `true` is R2. `INSERT` policies for
   `authenticated` and `FOR ALL` policies are not looked at by R12, so
@@ -295,12 +295,12 @@ Details:
   with the same bare name as one defined in the scanned SQL counts as opaque,
   even if the call means a built-in. The severity is low only for a policy `TO anon` (not
   one with no `TO` clause or `TO public`, which also covers other roles) when
-  the scanned SQL revokes table-level `INSERT` or `ALL` from `anon` or `PUBLIC`,
+  the scanned SQL revokes table-level `INSERT` or `ALL` from `anon` by name,
   including `ON ALL TABLES IN SCHEMA` for tables that already exist at that
   point, and does not grant it again. Column-level grants and revokes are
   ignored, a revoke before the table is created has no effect, and a
-  `REVOKE ... FROM PUBLIC` does not remove a separate direct grant to `anon`
-  (the tool does not tell them apart). It cannot see grants made outside the
+  `REVOKE ... FROM PUBLIC` alone does not count, because Supabase grants
+  `anon` directly and that grant stays. It cannot see grants made outside the
   scanned files. **It cannot
   know that an anonymous form is intended** (a contact form, a waitlist, event
   logging). If so, tighten the check (length, allowed values) and add

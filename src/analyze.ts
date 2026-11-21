@@ -360,7 +360,12 @@ class Analyzer {
       if (isAnonLike(grantees)) this.updateGrant(t, g.is_grant === true, privs, loc);
       // Column-scoped grants and revokes do not decide whether the API can insert rows.
       const columnScoped = (g.privileges ?? []).some((x: Node) => x.AccessPriv?.cols?.length);
-      if (!columnScoped && apiRoles.includes("anon") && dmlPrivs(privs).includes("insert")) t.anonInsertRevoked = g.is_grant !== true;
+      // A grant to anon or PUBLIC re-enables inserts. Only a revoke that names anon counts: Supabase
+      // grants anon directly, so a revoke from PUBLIC alone usually leaves anon able to insert.
+      if (!columnScoped && apiRoles.includes("anon") && dmlPrivs(privs).includes("insert")) {
+        if (g.is_grant === true) t.anonInsertRevoked = false;
+        else if (grantees.includes("anon")) t.anonInsertRevoked = true;
+      }
     }
   }
 

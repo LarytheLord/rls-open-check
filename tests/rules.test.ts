@@ -580,9 +580,14 @@ describe("review round 2", () => {
     const r = await run1(T("body text", pol) + ` revoke insert (body) on public.t from anon;`);
     expect(only(r.findings, "R12").map((f) => f.severity)).toEqual(["medium"]);
   });
-  it("REVOKE FROM PUBLIC and ALL TABLES IN SCHEMA downgrade a TO anon policy", async () => {
+  it("REVOKE FROM PUBLIC alone does not downgrade a TO anon policy (anon keeps its direct grant)", async () => {
     const pol = `create policy "p" on public.t for insert to anon with check (body is not null);`;
-    for (const rv of [`revoke insert on public.t from public;`, `revoke all on all tables in schema public from anon;`]) {
+    const r = await run1(T("body text", pol) + " revoke insert on public.t from public;");
+    expect(only(r.findings, "R12").map((f) => f.severity)).toEqual(["medium"]);
+  });
+  it("a revoke naming anon, table-level or ALL TABLES IN SCHEMA, downgrades a TO anon policy", async () => {
+    const pol = `create policy "p" on public.t for insert to anon with check (body is not null);`;
+    for (const rv of [`revoke insert on public.t from public, anon;`, `revoke all on all tables in schema public from anon;`]) {
       const r = await run1(T("body text", pol) + " " + rv);
       expect([rv, only(r.findings, "R12").map((f) => f.severity)]).toEqual([rv, ["low"]]);
     }
