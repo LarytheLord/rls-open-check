@@ -399,6 +399,155 @@ create policy "p" on public.m for insert to anon with check (user_id is null);` 
   });
 });
 
+const T = (cols: string, extra = "") =>
+  `create table public.t (id int, ${cols}); alter table public.t enable row level security; ${extra}`;
+const run1 = (sql: string) => analyzeSources([{ file: "a.sql", sql }]);
+
+describe("R10 more cases", () => {
+  it("flags TO authenticated, anon as R2 only (anon is open, no R10)", async () => {
+    const r = await run1(T("user_id uuid", `create policy "p" on public.t for select to authenticated, anon using (true);`));
+    expect(rules(r.findings)).toEqual(["R2"]);
+  });
+  it("gives a policy on a table with no definition the low severity", async () => {
+    const r = await run1(`create policy "p" on public.ghost for select to authenticated using (true);`);
+    expect(r.findings.map((f) => [f.rule, f.severity])).toEqual([["R10", "low"]]);
+  });
+  it("handles quoted identifiers and a non-public schema table", async () => {
+    const q = await run1(`create table public."Notes" (id int, user_id uuid); alter table public."Notes" enable row level security;
+create policy "p" on public."Notes" for select to authenticated using (true);`);
+    expect(q.findings.map((f) => [f.rule, f.severity, f.object])).toEqual([["R10", "medium", 'public.Notes.p']]);
+    const s = await run1(`create table app.t (id int, user_id uuid); alter table app.t enable row level security;
+create policy "p" on app.t for select to authenticated using (true);`);
+    expect(s.findings.map((f) => [f.rule, f.severity, f.object])).toEqual([["R10", "medium", "app.t.p"]]);
+  });
+  it("does not treat a quoted mixed-case column as an owner column", async () => {
+    const r = await run1(`create table public.t (id int, "User_ID" uuid); alter table public.t enable row level security;
+create policy "p" on public.t for select to authenticated using (true);`);
+    expect(r.findings[0].severity).toBe("low");
+  });
+  it("tracks DROP COLUMN and RENAME COLUMN", async () => {
+    const base = `create table public.t (id int, user_id uuid); alter table public.t enable row level security;
+create policy "p" on public.t for select to authenticated using (true);`;
+    const dropped = await run1(base + ` alter table public.t drop column user_id;`);
+    expect(dropped.findings[0].severity).toBe("low");
+    const renamedAway = await run1(base + ` alter table public.t rename column user_id to who;`);
+    expect(renamedAway.findings[0].severity).toBe("low");
+    const renamedIn = await run1(`create table public.t (id int, who uuid); alter table public.t rename column who to owner_id;
+alter table public.t enable row level security;
+create policy "p" on public.t for select to authenticated using (true);`);
+    expect(renamedIn.findings[0].severity).toBe("medium");
+  });
+  it("counts author_id, account_id, tenant_id and org_id as owner columns", async () => {
+    for (const c of ["author_id", "account_id", "tenant_id", "org_id"]) {
+      const r = await run1(T(`${c} uuid`, `create policy "p" on public.t for select to authenticated using (true);`));
+      expect([c, r.findings[0].severity]).toEqual([c, "medium"]);
+    }
+  });
+  it("does not say the table has no owner column when the columns are unknown (LIKE, INHERITS, PARTITION OF, CTAS)", async () => {
+    const pol = `alter table public.t enable row level security; create policy "p" on public.t for select to authenticated using (true);`;
+    const variants = [
+      `create table public.t (like public.base);`,
+      `create table public.t () inherits (public.base);`,
+      `create table public.t partition of public.base for values in (1);`,
+      `create table public.t as select 1 as id;`,
+    ];
+    for (const v of variants) {
+      const r = await run1(v + pol);
+      expect([v, r.findings[0].severity]).toEqual([v, "medium"]);
+      expect(r.findings[0].message).not.toContain("no user_id");
+    }
+  });
+  it("drops policies with the table (no orphan finding after DROP TABLE)", async () => {
+    const r = await run1(T("user_id uuid", `create policy "p" on public.t for select to authenticated using (true); drop table public.t;`));
+    expect(r.findings).toEqual([]);
+  });
+});
+
+describe("R11 more cases", () => {
+  it("builds the message from the clause that matched: WITH CHECK only", async () => {
+    const r = await run1(T("user_id uuid", `create policy "p" on public.t for update to authenticated using (user_id = auth.uid()) with check (auth.uid() is not null);`));
+    const f = only(r.findings, "R11");
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toContain("WITH CHECK only checks that the caller is logged in");
+    expect(f[0].message).toContain("any values");
+    expect(f[0].message).not.toContain("every row");
+  });
+  it("says insert any values for INSERT, without the garbled wording", async () => {
+    const r = await run1(T("user_id uuid", `create policy "p" on public.t for insert to authenticated with check (auth.uid() is not null);`));
+    const m = only(r.findings, "R11")[0].message;
+    expect(m).toContain("insert rows with any values");
+    expect(m).not.toContain("as anyone");
+  });
+  it("says every row when USING is the matching clause", async () => {
+    const r = await run1(T("user_id uuid", `create policy "p" on public.t for delete to authenticated using (auth.uid() is not null);`));
+    expect(only(r.findings, "R11")[0].message).toContain("any logged-in user can delete every row");
+  });
+  it("reports once, covering both clauses, when USING and WITH CHECK both match", async () => {
+    const r = await run1(T("user_id uuid", `create policy "p" on public.t for update to authenticated using (auth.uid() is not null) with check (auth.uid() is not null);`));
+    const f = only(r.findings, "R11");
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toContain("update every row");
+    expect(f[0].message).toContain("any values");
+  });
+  it("skips R11 when R3 already fired on the same policy", async () => {
+    const r = await run1(T("user_id uuid", `create policy "p" on public.t for update to authenticated using (true) with check (auth.uid() is not null);`));
+    expect(rules(r.findings)).toEqual(["R3"]);
+  });
+  it("skips R11 when R2 already fired on the same policy", async () => {
+    const r = await run1(T("user_id uuid", `create policy "p" on public.t for all using (true) with check (auth.uid() is not null);`));
+    expect(rules(r.findings)).toEqual(["R2"]);
+  });
+  it("does not match an OR or auth.jwt() ->> 'role' (documented false negatives)", async () => {
+    const or = await run1(T("user_id uuid", `create policy "p" on public.t for select to authenticated using (auth.uid() is not null or user_id = auth.uid());`));
+    expect(only(or.findings, "R11")).toEqual([]);
+    const jwt = await run1(T("user_id uuid", `create policy "p" on public.t for select to authenticated using ((auth.jwt() ->> 'role') = 'authenticated');`));
+    expect(only(jwt.findings, "R11")).toEqual([]);
+  });
+  it("handles quoted and non-public schema tables", async () => {
+    const r = await run1(`create table app."Notes" (id int, user_id uuid); alter table app."Notes" enable row level security;
+create policy "p" on app."Notes" for select using (auth.uid() is not null);`);
+    expect(r.findings.map((f) => [f.rule, f.object])).toEqual([["R11", "app.Notes.p"]]);
+  });
+  it("follows ALTER POLICY changing the role from authenticated to anon", async () => {
+    const r = await analyzeSources([
+      { file: "a.sql", sql: T("user_id uuid", `create policy "p" on public.t for select to authenticated using (auth.uid() is not null);`) },
+      { file: "b.sql", sql: `alter policy "p" on public.t to anon;` },
+    ]);
+    expect(only(r.findings, "R11")).toEqual([]);
+  });
+});
+
+describe("R12 more cases", () => {
+  it("skips FOR ALL policies (documented gap)", async () => {
+    const r = await run1(T("body text", `create policy "p" on public.t for all to anon using (body is not null) with check (body is not null);`));
+    expect(only(r.findings, "R12")).toEqual([]);
+  });
+  it("flags WITH CHECK (auth.role() = 'anon'): it names a role, not the caller", async () => {
+    const r = await run1(T("body text", `create policy "p" on public.t for insert to anon with check (auth.role() = 'anon');`));
+    expect(only(r.findings, "R12")).toHaveLength(1);
+  });
+  it("still skips a function in another schema, auth.email() and auth.jwt()", async () => {
+    for (const c of ["extensions.check_it(body)", "auth.email() = body", "auth.jwt() ->> 'sub' = body"]) {
+      const r = await run1(T("body text", `create policy "p" on public.t for insert to anon with check (${c});`));
+      expect([c, only(r.findings, "R12").length]).toEqual([c, 0]);
+    }
+  });
+  it("follows ALTER POLICY changing the role to authenticated", async () => {
+    const r = await analyzeSources([
+      { file: "a.sql", sql: T("body text", `create policy "p" on public.t for insert to anon with check (body is not null);`) },
+      { file: "b.sql", sql: `alter policy "p" on public.t to authenticated;` },
+    ]);
+    expect(only(r.findings, "R12")).toEqual([]);
+  });
+  it("is low when anon INSERT was revoked, medium again after a re-grant", async () => {
+    const pol = `create policy "p" on public.t for insert to anon with check (body is not null);`;
+    const revoked = await run1(T("body text", pol) + ` revoke insert on public.t from anon;`);
+    expect(only(revoked.findings, "R12").map((f) => f.severity)).toEqual(["low"]);
+    const regrant = await run1(T("body text", pol) + ` revoke all on public.t from anon; grant insert on public.t to anon;`);
+    expect(only(regrant.findings, "R12").map((f) => f.severity)).toEqual(["medium"]);
+  });
+});
+
 describe("mixed app and parse errors", () => {
   it("reports findings across several files with file and line", async () => {
     const r = await scan("mixed-app");
