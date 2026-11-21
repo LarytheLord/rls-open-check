@@ -14,6 +14,12 @@ interface TableState {
   anonGrant: { loc: Loc; privs: Set<string> } | undefined;
   /** DML privileges (select, insert, update, delete) per API role, for R7. */
   dml: Map<ApiRole, DmlGrant>;
+  /** Column names seen in CREATE TABLE and ALTER TABLE, lowercased (for R10 and R11). */
+  columns: Set<string>;
+  /** False when the columns cannot be read (LIKE, INHERITS, PARTITION OF, CREATE TABLE AS). */
+  columnsKnown: boolean;
+  /** True after a REVOKE of INSERT from anon or PUBLIC and no later GRANT (lowers R12). */
+  anonInsertRevoked: boolean;
 }
 
 type ApiRole = "anon" | "authenticated";
@@ -175,6 +181,91 @@ export function readsUserMetadata(node: unknown): boolean {
   return false;
 }
 
+/** Column names that mean "this row belongs to someone" (R10, R11). */
+const OWNER_COLUMNS = ["user_id", "owner_id", "created_by", "profile_id", "author_id", "account_id", "tenant_id", "org_id"];
+const OWNER_COLUMNS_TEXT = OWNER_COLUMNS.slice(0, -1).join(", ") + " or " + OWNER_COLUMNS[OWNER_COLUMNS.length - 1];
+
+/** Function name parts of a FuncCall, lowercased, for example ["auth", "uid"]. */
+function funcParts(fc: Node): string[] {
+  return strings(fc.funcname).map((n) => n.toLowerCase());
+}
+
+/** auth.<fn>() written plainly or as (select auth.<fn>()), which Supabase recommends. */
+function isAuthCall(n: Node | undefined, fn: string): boolean {
+  if (!n) return false;
+  if (n.FuncCall) {
+    const p = funcParts(n.FuncCall);
+    return p.length === 2 && p[0] === "auth" && p[1] === fn && !(n.FuncCall.args?.length);
+  }
+  if (n.SubLink && n.SubLink.subLinkType === "EXPR_SUBLINK") {
+    const sel = n.SubLink.subselect?.SelectStmt;
+    const tl: Node[] | undefined = sel?.targetList;
+    return !!tl && tl.length === 1 && !sel.fromClause && isAuthCall(tl[0].ResTarget?.val, fn);
+  }
+  return false;
+}
+
+/**
+ * True when the whole expression is nothing more than "the caller is logged in":
+ * auth.uid() IS NOT NULL, auth.role() = 'authenticated', or an AND of only those.
+ * Anything else (an OR, a column comparison, a subquery) is not judged.
+ */
+export function isLoggedInOnly(expr: Node | undefined): boolean {
+  if (!expr) return false;
+  if (expr.NullTest) return expr.NullTest.nulltesttype === "IS_NOT_NULL" && isAuthCall(expr.NullTest.arg, "uid");
+  if (expr.A_Expr && expr.A_Expr.kind === "AEXPR_OP" && strings(expr.A_Expr.name)[0] === "=") {
+    const { lexpr: l, rexpr: r } = expr.A_Expr;
+    const isAuthenticated = (c: Node | undefined) => String(c?.A_Const?.sval?.sval).toLowerCase() === "authenticated";
+    return (isAuthCall(l, "role") && isAuthenticated(r)) || (isAuthCall(r, "role") && isAuthenticated(l));
+  }
+  if (expr.BoolExpr && expr.BoolExpr.boolop === "AND_EXPR") {
+    const args: Node[] = expr.BoolExpr.args ?? [];
+    return args.length > 0 && args.every(isLoggedInOnly);
+  }
+  return false;
+}
+
+/** Visit every node of an expression tree. */
+function walk(node: unknown, fn: (n: Node) => void) {
+  if (Array.isArray(node)) node.forEach((x) => walk(x, fn));
+  else if (node && typeof node === "object") {
+    fn(node as Node);
+    for (const v of Object.values(node as Node)) walk(v, fn);
+  }
+}
+
+/**
+ * R12 helper: true when a WITH CHECK clearly never looks at who the caller is.
+ * It returns false (no finding) when it cannot tell: a subquery, a setting read,
+ * a schema-qualified function, or a function defined in the scanned SQL.
+ */
+function ignoresCaller(expr: Node | undefined, userFns: Set<string>): boolean {
+  if (!expr) return false;
+  let sees = false;
+  // auth.role() compared to 'anon' or 'public' names no caller; any other use is opaque.
+  const blindRole = new Set<Node>();
+  walk(expr, (n) => {
+    const a = n.A_Expr;
+    if (!a || a.kind !== "AEXPR_OP" || strings(a.name)[0] !== "=") return;
+    const lit = (c: Node | undefined) => ["anon", "public"].includes(String(c?.A_Const?.sval?.sval).toLowerCase());
+    for (const [x, y] of [[a.lexpr, a.rexpr], [a.rexpr, a.lexpr]]) {
+      if (x?.FuncCall && isAuthCall(x, "role") && lit(y)) blindRole.add(x.FuncCall);
+    }
+  });
+  walk(expr, (n) => {
+    if (n.SubLink) sees = true;
+    if (n.FuncCall) {
+      const p = funcParts(n.FuncCall);
+      // auth.role() only names the caller's role, so it does not count as reading identity.
+      if (blindRole.has(n.FuncCall)) return;
+      if (p[0] === "auth" && ["uid", "jwt", "email"].includes(p[1])) sees = true;
+      else if (p.length > 1 && p[0] !== "pg_catalog") sees = true;
+      else if (p.length === 1 && (p[0] === "current_setting" || userFns.has(p[0]))) sees = true;
+    }
+  });
+  return !sees;
+}
+
 class Analyzer {
   tables = new Map<string, TableState>();
   policies = new Map<string, PolicyState>();
@@ -189,13 +280,13 @@ class Analyzer {
   private table(key: string, schema: string, name: string): TableState {
     let t = this.tables.get(key);
     if (!t) {
-      t = { schema, name, created: undefined, rls: false, disabledAt: undefined, anonGrant: undefined, dml: new Map() };
+      t = { schema, name, created: undefined, rls: false, disabledAt: undefined, anonGrant: undefined, dml: new Map(), columns: new Set(), columnsKnown: true, anonInsertRevoked: false };
       this.tables.set(key, t);
     }
     return t;
   }
 
-  private createTable(rv: Node, loc: Loc) {
+  private createTable(rv: Node, loc: Loc, elts?: Node[], columnsUnknown = false) {
     if (rv.relpersistence === "t") return; // temp table
     const schema = rv.schemaname ?? DEFAULT_SCHEMA;
     const key = tkey(schema, rv.relname);
@@ -203,6 +294,12 @@ class Analyzer {
     if (this.tables.get(key)?.created) return;
     const t = this.table(key, schema, rv.relname);
     t.created = loc;
+    // The parser already lowercases unquoted names, so quoted "User_ID" stays distinct.
+    for (const e of elts ?? []) {
+      if (e.ColumnDef?.colname) t.columns.add(String(e.ColumnDef.colname));
+      else if (e.TableLikeClause) t.columnsKnown = false;
+    }
+    if (columnsUnknown) t.columnsKnown = false;
     const d = this.defaultAnon.get(schema) ?? this.defaultAnon.get("*");
     if (d) t.anonGrant = { loc: d.loc, privs: new Set(d.privs) };
     const dd = this.defaultDml.get(schema) ?? this.defaultDml.get("*");
@@ -261,6 +358,14 @@ class Analyzer {
     for (const t of targets) {
       for (const role of apiRoles) applyDml(t.dml, role, g.is_grant === true, privs, loc);
       if (isAnonLike(grantees)) this.updateGrant(t, g.is_grant === true, privs, loc);
+      // Column-scoped grants and revokes do not decide whether the API can insert rows.
+      const columnScoped = (g.privileges ?? []).some((x: Node) => x.AccessPriv?.cols?.length);
+      // A grant to anon or PUBLIC re-enables inserts. Only a revoke that names anon counts: Supabase
+      // grants anon directly, so a revoke from PUBLIC alone usually leaves anon able to insert.
+      if (!columnScoped && apiRoles.includes("anon") && dmlPrivs(privs).includes("insert")) {
+        if (g.is_grant === true) t.anonInsertRevoked = false;
+        else if (grantees.includes("anon")) t.anonInsertRevoked = true;
+      }
     }
   }
 
@@ -370,7 +475,11 @@ class Analyzer {
     const key = rangeVarKey(rv);
     for (const c of s.cmds ?? []) {
       const sub = c.AlterTableCmd?.subtype;
-      if (sub === "AT_EnableRowSecurity") {
+      if (sub === "AT_AddColumn" && c.AlterTableCmd.def?.ColumnDef?.colname) {
+        this.table(key, rv.schemaname ?? DEFAULT_SCHEMA, rv.relname).columns.add(String(c.AlterTableCmd.def.ColumnDef.colname));
+      } else if (sub === "AT_DropColumn" && c.AlterTableCmd.name) {
+        this.tables.get(key)?.columns.delete(String(c.AlterTableCmd.name));
+      } else if (sub === "AT_EnableRowSecurity") {
         const t = this.table(key, rv.schemaname ?? DEFAULT_SCHEMA, rv.relname);
         t.rls = true;
         t.disabledAt = undefined;
@@ -388,10 +497,10 @@ class Analyzer {
     const s = node[type];
     switch (type) {
       case "CreateStmt":
-        this.createTable(s.relation, loc);
+        this.createTable(s.relation, loc, s.tableElts, (s.inhRelations?.length ?? 0) > 0 || !!s.partbound);
         break;
       case "CreateTableAsStmt":
-        if (s.objtype === "OBJECT_TABLE" && s.into?.rel) this.createTable(s.into.rel, loc);
+        if (s.objtype === "OBJECT_TABLE" && s.into?.rel) this.createTable(s.into.rel, loc, undefined, true);
         break;
       case "AlterTableStmt":
         this.alterTable(s, loc);
@@ -407,6 +516,9 @@ class Analyzer {
             this.tables.set(nk, t);
             for (const p of this.policies.values()) if (p.table === old) p.table = nk;
           }
+        } else if (s.renameType === "OBJECT_COLUMN" && s.relation) {
+          const cols = this.tables.get(rangeVarKey(s.relation))?.columns;
+          if (cols && cols.delete(String(s.subname))) cols.add(String(s.newname));
         } else if (s.renameType === "OBJECT_POLICY" && s.relation) {
           const tk = rangeVarKey(s.relation);
           const p = this.policies.get(`${tk}::${s.subname}`);
@@ -598,6 +710,7 @@ class Analyzer {
       });
     }
 
+    const r2r3: Set<PolicyState> = new Set();
     for (const p of this.policies.values()) {
       const t = this.tables.get(p.table);
       // A policy on a table whose RLS is off does nothing; R1 or R6 covers it.
@@ -609,6 +722,7 @@ class Analyzer {
       const writes = p.cmd !== "select";
 
       if (isAnonLike(p.roles)) {
+        r2r3.add(p);
         const who = p.roles.includes("anon") ? "anon" : "public";
         out.push({
           rule: "R2",
@@ -623,6 +737,7 @@ class Analyzer {
         // R3 also covers INSERT: WITH CHECK (true) lets any logged-in user add rows
         // as anyone (splinter 0024 rls_policy_always_true, authenticated role).
         if (p.cmd === "insert") {
+          r2r3.add(p);
           out.push({
             rule: "R3",
             severity: "high",
@@ -633,6 +748,7 @@ class Analyzer {
             fix: `Check the new row, for example WITH CHECK (auth.uid() = user_id).`,
           });
         } else if (["update", "delete", "all"].includes(p.cmd)) {
+          r2r3.add(p);
           out.push({
             rule: "R3",
             severity: "high",
@@ -643,6 +759,69 @@ class Analyzer {
             fix: `Limit the rows to their owner, for example USING (auth.uid() = user_id).`,
           });
         }
+      }
+    }
+
+    // R10, R11 and R12 look for policies that pass a check without tying a row to its owner.
+    // They skip what R2 and R3 already report (conditions that are exactly true).
+    const userFns = new Set([...this.functions.values()].map((f) => f.name.toLowerCase()));
+    for (const p of this.policies.values()) {
+      const t = this.tables.get(p.table);
+      if (t && !t.rls) continue;
+      if (!p.permissive) continue;
+      const object = `${p.table}.${p.name}`;
+      // When the columns cannot be read (LIKE, INHERITS, PARTITION OF, CTAS) assume an owner column may exist.
+      const hasOwner = !!t && (!t.columnsKnown || OWNER_COLUMNS.some((c) => t.columns.has(c)));
+      const loggedIn = p.roles.includes("authenticated") || p.roles.includes("public");
+
+      if (p.cmd === "select" && p.roles.includes("authenticated") && !isAnonLike(p.roles) && isTrueConst(p.qual)) {
+        out.push({
+          rule: "R10",
+          severity: hasOwner ? "medium" : "low",
+          object,
+          file: p.loc.file,
+          line: p.loc.line,
+          message: `Policy "${p.name}" on ${p.table} has USING (true) for authenticated, so any logged-in user can read every row.${hasOwner ? "" : ` The table has no ${OWNER_COLUMNS_TEXT} column, so this may be shared data on purpose.`}`,
+          fix: `Limit the rows to their owner, for example USING ((select auth.uid()) = user_id), if the rows are not meant to be shared.`,
+        });
+      }
+
+      if (loggedIn && !r2r3.has(p)) {
+        const usingHit = ["select", "update", "delete", "all"].includes(p.cmd) && isLoggedInOnly(p.qual);
+        const checkHit = ["insert", "update", "all"].includes(p.cmd) && isLoggedInOnly(p.withCheck);
+        if (usingHit || checkHit) {
+          const shared = p.cmd === "select" && !hasOwner;
+          // Say what the clause that matched allows. USING decides which rows; WITH CHECK decides which values.
+          const rowsVerb = p.cmd === "select" ? "read" : p.cmd === "all" ? "read and change" : p.cmd;
+          const valuesText = p.cmd === "insert" ? "insert rows with any values" : "write any values, including a row that names someone else as the owner";
+          const what = usingHit
+            ? `any logged-in user can ${rowsVerb} every row${checkHit ? ` and ${valuesText}` : ""}`
+            : `any logged-in user can ${valuesText}`;
+          const label = usingHit && checkHit ? "USING and WITH CHECK" : usingHit ? "USING" : "WITH CHECK";
+          out.push({
+            rule: "R11",
+            severity: shared ? "low" : "medium",
+            object,
+            file: p.loc.file,
+            line: p.loc.line,
+            message: `Policy "${p.name}" on ${p.table}: ${label} only ${usingHit && checkHit ? "check" : "checks"} that the caller is logged in, so ${what}.${shared ? ` The table has no ${OWNER_COLUMNS_TEXT} column, so this may be shared data on purpose.` : ""}`,
+            fix: `Compare auth.uid() to a column of the row, for example (select auth.uid()) = user_id.`,
+          });
+        }
+      }
+
+      // Low only when the policy is anon-only: a no-TO or TO public policy also covers other roles.
+      const anonOnly = p.roles.includes("anon") && !p.roles.includes("public") && !p.roles.includes("authenticated");
+      if (p.cmd === "insert" && isAnonLike(p.roles) && p.withCheck && !isTrueConst(p.withCheck) && ignoresCaller(p.withCheck, userFns)) {
+        out.push({
+          rule: "R12",
+          severity: t?.anonInsertRevoked && anonOnly ? "low" : "medium",
+          object,
+          file: p.loc.file,
+          line: p.loc.line,
+          message: `Policy "${p.name}" on ${p.table} lets ${p.roles.includes("anon") ? "anon" : "public"} insert rows, and its WITH CHECK never reads auth.uid(), auth.jwt() or auth.email(), so anyone can insert rows.${t?.anonInsertRevoked && anonOnly ? " INSERT was revoked from anon in the scanned SQL, so the API may refuse it anyway." : ""}`,
+          fix: `If this is not a public form, use TO authenticated and WITH CHECK ((select auth.uid()) = user_id). If it is, keep the check strict and add -- rls-open-check-ignore R12 above it.`,
+        });
       }
     }
 

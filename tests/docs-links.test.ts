@@ -12,6 +12,7 @@ describe("rule docs links", () => {
   it("builds the url from the rule id", () => {
     expect(ruleDocsUrl("R1")).toBe(BASE + "r1");
     expect(ruleDocsUrl("R9")).toBe(BASE + "r9");
+    expect(ruleDocsUrl("R12")).toBe(BASE + "r12");
   });
   it("SARIF rules carry helpUri", async () => {
     const log = JSON.parse((await run(["--format", "sarif", fx("r1-good")])).stdout);

@@ -64,7 +64,7 @@ describe("README", () => {
   });
   it("rule table lists every rule and names the splinter lints R8 and R9 follow", () => {
     const table = readme().split("## What it checks")[1].split("Details:")[0];
-    for (const id of ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9"]) expect(table).toContain(`| ${id} |`);
+    for (const id of ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12"]) expect(table).toContain(`| ${id} |`);
     expect(table).toContain("0015");
     expect(table).toContain("0028");
     expect(table).toContain("0029");
@@ -74,7 +74,7 @@ describe("README", () => {
     const h = "## How this compares to Supabase's database linter (splinter)";
     expect(readme()).toContain(h);
     const sec = readme().split(h)[1].split("\n## ")[0];
-    for (const id of ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9"]) expect(sec).toContain(`| ${id} |`);
+    for (const id of ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12"]) expect(sec).toContain(`| ${id} |`);
     for (const lint of ["0013", "0024", "0011", "0015", "0028", "0029"]) expect(sec).toContain(lint);
     expect(sec).toMatch(/live database/);
     expect(sec).toMatch(/no database and no credentials/);

@@ -23,7 +23,15 @@ Keep a Changelog, and the project uses Semantic Versioning.
   FUNCTIONS IN SCHEMA` and `ALTER DEFAULT PRIVILEGES ... ON FUNCTIONS` are
   applied in file order. Follows splinter lints 0028 and 0029. Trigger functions
   are skipped.
-- R8 and R9 are listed in the SARIF rule metadata.
+- Rule R10: `SELECT` policy for `authenticated` with `USING (true)`. Medium when
+  the table has a `user_id`, `owner_id`, `created_by` or `profile_id` column,
+  low when it has none.
+- Rule R11: policy whose `USING` or `WITH CHECK` is only `auth.uid() IS NOT NULL`
+  or `auth.role() = 'authenticated'`, with no comparison to a column.
+- Rule R12: `INSERT` policy for `anon` or with no `TO` clause whose `WITH CHECK`
+  never reads `auth.uid()` or `auth.jwt()`.
+- The analyzer now tracks column names per table.
+- R8 to R12 are listed in the SARIF rule metadata.
 - Every rule has a stable `### R1` style heading in the README, and each SARIF
   rule carries a `helpUri` that points to it
   (`https://github.com/LarytheLord/rls-open-check#r1`).
