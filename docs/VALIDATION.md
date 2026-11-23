@@ -145,6 +145,38 @@ evidence that R8 is right; it rests on the unit tests only.
 - It scanned only migrations and schema files, not application code, Storage
   policies set from the dashboard, or Edge Functions.
 
+## Precision sample, 23 Nov 2026 (52 findings)
+
+This sample asks one narrow question: of the findings the tool reported in a set of public repos, how many were a real access problem when read against their SQL?
+
+- **Population.** Public GitHub repos found by code search for SQL files under a path containing "migration", not forks, not archived, pushed since 2025. 120 repos were scanned. They are small: 97 have 0 stars, none has 10 or more (most stars: 7). Code search results are not a random sample of apps.
+- **Raw counts.** 111 of the 120 scanned repos had at least one finding. That figure says little about real exposure (see the last bullet below).
+- **Sample.** Up to 5 findings per rule, each from a different repo, taken in scan order (first found, not random). 52 findings in all. Repo names are not published and the owners were not contacted.
+- **Method.** Each finding was read against its SQL and marked real, not a problem, or unsure. Ambiguous cases were settled on the SQL shown. This is judgement from a snippet, not a test against a live database. "Not a problem" includes policies that look intended, such as a public form.
+
+| Rule | Real | Not a problem | Unsure |
+|---|---|---|---|
+| R1 | 5 | 0 | 0 |
+| R2 | 3 | 2 | 0 |
+| R3 | 5 | 0 | 0 |
+| R4 | 1 | 0 | 2 |
+| R5 | 4 | 0 | 1 |
+| R6 | 1 | 1 | 0 |
+| R7 | 2 | 2 | 1 |
+| R8 | 1 | 0 | 1 |
+| R9 | 2 | 1 | 2 |
+| R10 | 1 | 4 | 0 |
+| R11 | 2 | 3 | 0 |
+| R12 | 0 | 5 | 0 |
+| Total | 27 | 18 | 7 |
+
+Of the 52 findings, 27 were real, 18 were not a problem and 7 were unsure. Among the 45 that could be decided, 27 (60 percent) were real; counting every unsure one as real or as not real gives a range of 52 to 65 percent. Read it like this:
+
+- Each rule has 2 to 5 items, so one cell proves little. The sample is stratified by rule, so the 60 percent is not what a typical run would show.
+- R1, R3, R4, R5 and R8 had no "not a problem" finding in this small sample (R4 and R8 have only 3 and 2 items). R5 is a function hygiene finding (`SET search_path`), not strictly a data-access one.
+- R10, R11 and R12 mostly flagged policies that looked intended in this sample, for example public contact forms, analytics or crash-report inserts and shared reference data. Treat them as prompts to look, not as defects, and use `-- rls-open-check-ignore` when the design is intended.
+- Migration files do not show the live database, so a count of repos with findings is not a count of exposed apps.
+
 ## Note on running more than one project
 
 Passing several unrelated projects in one run merges their migrations into one
