@@ -177,6 +177,20 @@ Of the 52 findings, 27 were real, 18 were not a problem and 7 were unsure. Among
 - R10, R11 and R12 mostly flagged policies that looked intended in this sample, for example public contact forms, analytics or crash-report inserts and shared reference data. Treat them as prompts to look, not as defects, and use `-- rls-open-check-ignore` when the design is intended.
 - Migration files do not show the live database, so a count of repos with findings is not a count of exposed apps.
 
+## Second sample for R10 to R12, 24 Nov 2026 (36 findings)
+
+The first sample had only 5 findings for each of R10, R11 and R12, so a second one drew up to 12 findings per rule for these three rules, one per repo, in scan order, from the same 120 repos. Each was read against its SQL, the same way as above.
+
+| Rule | Real | Not a problem | Unsure |
+|---|---|---|---|
+| R10 | 2 | 8 | 2 |
+| R11 | 4 | 8 | 0 |
+| R12 | 3 | 8 | 1 |
+
+- R10 and R11 findings that the tool already marks low (no owner column on the table) were almost all not a problem: R10 low had 1 real of 8 decided, and R11 low 0 of 5. R11 at medium was 4 real of 7.
+- R12 was 3 real of 11 decided here and 0 of 5 above, so about 3 of 16. Typical not-a-problem cases were event logs, contact forms and inserts with a restricted set of allowed values.
+- R12 is therefore always low severity from this change on. R10 and R11 keep their current severities: the low ones are already low, and the medium ones held up better.
+
 ## Note on running more than one project
 
 Passing several unrelated projects in one run merges their migrations into one

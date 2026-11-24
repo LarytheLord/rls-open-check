@@ -19,7 +19,7 @@ export const RULES: RuleInfo[] = [
   { id: "R9", name: "SecurityDefinerExecutableByApiRole", severity: "medium", description: "SECURITY DEFINER function in public can be run by anon or authenticated through the Data API." },
   { id: "R10", name: "AuthenticatedReadsEveryRow", severity: "medium", description: "Policy lets any logged-in user read every row, with USING (true) for authenticated. Low when the table has no owner column (user_id, owner_id, created_by, profile_id, author_id, account_id, tenant_id, org_id)." },
   { id: "R11", name: "PolicyOnlyChecksLoggedIn", severity: "medium", description: "Policy only checks that someone is logged in (auth.uid() IS NOT NULL or auth.role() = 'authenticated'), with no comparison to a column. Not reported when R2 or R3 already reports the policy." },
-  { id: "R12", name: "AnonInsertWithoutIdentityCheck", severity: "medium", description: "INSERT policy for anon or public whose WITH CHECK never reads auth.uid(), auth.jwt() or auth.email(): anyone can insert rows. Low when INSERT was revoked from anon." },
+  { id: "R12", name: "AnonInsertWithoutIdentityCheck", severity: "low", description: "INSERT policy for anon or public whose WITH CHECK never reads auth.uid(), auth.jwt() or auth.email(): anyone can insert rows. Always low: most anonymous inserts in a hand-read sample were intended. The message says when INSERT was revoked from anon." },
 ];
 
 const DOCS_BASE = "https://github.com/LarytheLord/rls-open-check#";

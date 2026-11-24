@@ -5,6 +5,10 @@ Keep a Changelog, and the project uses Semantic Versioning.
 
 ## [0.2.0] - unreleased
 
+### Changed
+
+- R12 is now always low severity. In a hand-read sample of 52 findings none of 5 R12 findings was real, and in a second sample of 12 R12 findings 3 were real (3 of the 16 decided findings in both samples, about 19 percent): most anonymous inserts were public forms or event logs. The message still notes when INSERT was revoked from anon. See docs/VALIDATION.md.
+
 ### Added
 
 - `-- rls-open-check-ignore R2` on the line directly above a statement ignores

@@ -18,7 +18,7 @@ interface TableState {
   columns: Set<string>;
   /** False when the columns cannot be read (LIKE, INHERITS, PARTITION OF, CREATE TABLE AS). */
   columnsKnown: boolean;
-  /** True after a REVOKE of INSERT from anon or PUBLIC and no later GRANT (lowers R12). */
+  /** True after a REVOKE of INSERT from anon or PUBLIC and no later GRANT (adds a note to R12). */
   anonInsertRevoked: boolean;
 }
 
@@ -810,12 +810,12 @@ class Analyzer {
         }
       }
 
-      // Low only when the policy is anon-only: a no-TO or TO public policy also covers other roles.
+      // The revoked note is only added when the policy is anon-only: a no-TO or TO public policy also covers other roles.
       const anonOnly = p.roles.includes("anon") && !p.roles.includes("public") && !p.roles.includes("authenticated");
       if (p.cmd === "insert" && isAnonLike(p.roles) && p.withCheck && !isTrueConst(p.withCheck) && ignoresCaller(p.withCheck, userFns)) {
         out.push({
           rule: "R12",
-          severity: t?.anonInsertRevoked && anonOnly ? "low" : "medium",
+          severity: "low",
           object,
           file: p.loc.file,
           line: p.loc.line,
