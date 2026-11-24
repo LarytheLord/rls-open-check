@@ -155,7 +155,7 @@ Each finding has a rule id, a severity and a one-line fix hint.
 | R9 | medium | A `SECURITY DEFINER` function in `public` that `anon` or `authenticated` can run: `GRANT EXECUTE` to either role or `PUBLIC`, or no `REVOKE EXECUTE ... FROM PUBLIC` (Postgres grants EXECUTE to `PUBLIC` on new functions). Like splinter lints 0028 and 0029. Separate from R5, so one function can get both | `REVOKE EXECUTE ON FUNCTION ... FROM PUBLIC, anon, authenticated`, then grant only to roles that need it |
 | R10 | medium (low if the table has no owner column: `user_id`, `owner_id`, `created_by`, `profile_id`, `author_id`, `account_id`, `tenant_id` or `org_id`) | A permissive `SELECT` policy for `authenticated` with `USING (true)`: any logged-in user can read every row | Use `USING ((select auth.uid()) = user_id)` unless the rows are shared on purpose |
 | R11 | medium (low for SELECT on a table with no owner column) | A policy whose `USING` or `WITH CHECK` is only `auth.uid() IS NOT NULL` or `auth.role() = 'authenticated'` (alone or joined with `AND`), with no comparison of `auth.uid()` to a column. Applies to `authenticated` and to a policy with no `TO` clause. Not reported when R2 or R3 already reports the same policy | Compare `auth.uid()` to a column of the row |
-| R12 | medium | An `INSERT` policy for `anon`, or with no `TO` clause, whose `WITH CHECK` never reads `auth.uid()`, `auth.jwt()` or `auth.email()` (and is not plain `true`, which is R2): anyone can insert rows. Low if the scanned SQL revokes `INSERT` from `anon` | Use `TO authenticated` and `WITH CHECK ((select auth.uid()) = user_id)`, or accept it with an ignore comment if it is a public form |
+| R12 | low | An `INSERT` policy for `anon`, or with no `TO` clause, whose `WITH CHECK` never reads `auth.uid()`, `auth.jwt()` or `auth.email()` (and is not plain `true`, which is R2): anyone can insert rows. Always low; the message notes it when the scanned SQL revokes `INSERT` from `anon` | Use `TO authenticated` and `WITH CHECK ((select auth.uid()) = user_id)`, or accept it with an ignore comment if it is a public form |
 
 **Rule reference.** Each rule has its own heading, so `https://github.com/LarytheLord/rls-open-check#r1`
 (and `#r2` and so on) links straight to it. SARIF `helpUri` and the "Docs:"
@@ -293,7 +293,8 @@ Details:
   `authenticated` and `FOR ALL` policies are not looked at by R12, so
   `FOR ALL TO anon WITH CHECK (body IS NOT NULL)` is a known gap. A function
   with the same bare name as one defined in the scanned SQL counts as opaque,
-  even if the call means a built-in. The severity is low only for a policy `TO anon` (not
+  even if the call means a built-in. The severity is always low, because most anonymous inserts in a hand-read sample were intended
+  (see [docs/VALIDATION.md](docs/VALIDATION.md)). The message adds a note only for a policy `TO anon` (not
   one with no `TO` clause or `TO public`, which also covers other roles) when
   the scanned SQL revokes table-level `INSERT` or `ALL` from `anon` by name,
   including `ON ALL TABLES IN SCHEMA` for tables that already exist at that

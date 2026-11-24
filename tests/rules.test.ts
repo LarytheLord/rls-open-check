@@ -378,9 +378,9 @@ describe("R12 anyone can insert rows", () => {
   it("flags an anon or no-TO INSERT whose WITH CHECK never reads the caller", async () => {
     const f = only((await scan("r12-bad")).findings, "R12");
     expect(f.map((x) => [x.object, x.severity])).toEqual([
-      ["public.messages.anon insert", "medium"],
-      ["public.messages.default insert", "medium"],
-      ["public.messages.pub insert", "medium"],
+      ["public.messages.anon insert", "low"],
+      ["public.messages.default insert", "low"],
+      ["public.messages.pub insert", "low"],
     ]);
     expect(f[0].message).toContain("anyone can insert rows");
   });
@@ -539,12 +539,14 @@ describe("R12 more cases", () => {
     ]);
     expect(only(r.findings, "R12")).toEqual([]);
   });
-  it("is low when anon INSERT was revoked, medium again after a re-grant", async () => {
+  it("is always low; says so when anon INSERT was revoked, and not after a re-grant", async () => {
     const pol = `create policy "p" on public.t for insert to anon with check (body is not null);`;
     const revoked = await run1(T("body text", pol) + ` revoke insert on public.t from anon;`);
     expect(only(revoked.findings, "R12").map((f) => f.severity)).toEqual(["low"]);
+    expect(only(revoked.findings, "R12")[0].message).toContain("INSERT was revoked");
     const regrant = await run1(T("body text", pol) + ` revoke all on public.t from anon; grant insert on public.t to anon;`);
-    expect(only(regrant.findings, "R12").map((f) => f.severity)).toEqual(["medium"]);
+    expect(only(regrant.findings, "R12").map((f) => f.severity)).toEqual(["low"]);
+    expect(only(regrant.findings, "R12")[0].message).not.toContain("INSERT was revoked");
   });
 });
 
@@ -568,33 +570,39 @@ describe("review round 2", () => {
       expect([c, only(r.findings, "R12").length]).toEqual([c, 1]);
     }
   });
-  it("R12 low only for a TO anon policy; no-TO policies stay medium after a revoke", async () => {
+  it("R12 revoke note only for a TO anon policy; no-TO policies get no note after a revoke", async () => {
     const rev = ` revoke insert on public.t from anon;`;
     const noTo = await run1(T("body text", `create policy "p" on public.t for insert with check (body is not null);`) + rev);
-    expect(only(noTo.findings, "R12").map((f) => f.severity)).toEqual(["medium"]);
+    expect(only(noTo.findings, "R12").map((f) => f.severity)).toEqual(["low"]);
+    expect(only(noTo.findings, "R12")[0].message).not.toContain("INSERT was revoked");
     const pub = await run1(T("body text", `create policy "p" on public.t for insert to public with check (body is not null);`) + rev);
-    expect(only(pub.findings, "R12").map((f) => f.severity)).toEqual(["medium"]);
+    expect(only(pub.findings, "R12").map((f) => f.severity)).toEqual(["low"]);
+    expect(only(pub.findings, "R12")[0].message).not.toContain("INSERT was revoked");
   });
-  it("a column-level REVOKE INSERT does not downgrade R12", async () => {
+  it("a column-level REVOKE INSERT adds no revoked note to R12", async () => {
     const pol = `create policy "p" on public.t for insert to anon with check (body is not null);`;
     const r = await run1(T("body text", pol) + ` revoke insert (body) on public.t from anon;`);
-    expect(only(r.findings, "R12").map((f) => f.severity)).toEqual(["medium"]);
+    expect(only(r.findings, "R12").map((f) => f.severity)).toEqual(["low"]);
+    expect(only(r.findings, "R12")[0].message).not.toContain("INSERT was revoked");
   });
-  it("REVOKE FROM PUBLIC alone does not downgrade a TO anon policy (anon keeps its direct grant)", async () => {
+  it("REVOKE FROM PUBLIC alone adds no revoked note to a TO anon policy (anon keeps its direct grant)", async () => {
     const pol = `create policy "p" on public.t for insert to anon with check (body is not null);`;
     const r = await run1(T("body text", pol) + " revoke insert on public.t from public;");
-    expect(only(r.findings, "R12").map((f) => f.severity)).toEqual(["medium"]);
+    expect(only(r.findings, "R12").map((f) => f.severity)).toEqual(["low"]);
+    expect(only(r.findings, "R12")[0].message).not.toContain("INSERT was revoked");
   });
-  it("a revoke naming anon, table-level or ALL TABLES IN SCHEMA, downgrades a TO anon policy", async () => {
+  it("a revoke naming anon, table-level or ALL TABLES IN SCHEMA, adds the revoked note to a TO anon policy", async () => {
     const pol = `create policy "p" on public.t for insert to anon with check (body is not null);`;
     for (const rv of [`revoke insert on public.t from public, anon;`, `revoke all on all tables in schema public from anon;`]) {
       const r = await run1(T("body text", pol) + " " + rv);
       expect([rv, only(r.findings, "R12").map((f) => f.severity)]).toEqual([rv, ["low"]]);
+      expect([rv, only(r.findings, "R12")[0].message.includes("INSERT was revoked")]).toEqual([rv, true]);
     }
   });
   it("a revoke issued before the table exists changes nothing", async () => {
     const r = await run1(`revoke insert on public.t from anon; ` + T("body text", `create policy "p" on public.t for insert to anon with check (body is not null);`));
-    expect(only(r.findings, "R12").map((f) => f.severity)).toEqual(["medium"]);
+    expect(only(r.findings, "R12").map((f) => f.severity)).toEqual(["low"]);
+    expect(only(r.findings, "R12")[0].message).not.toContain("INSERT was revoked");
   });
 });
 
